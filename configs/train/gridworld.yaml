@@ -1,0 +1,11 @@
+env_config: "configs/envs/toy_gridworld.yaml"
+reward_config: "configs/reward/vision_only.yaml"
+algo: "sac"
+total_steps: 500000
+eval_interval: 10000
+save_interval: 50000
+seed: 0
+replay_buffer_size: 100000
+batch_size: 128
+gamma: 0.99
+learning_rate: 3e-4

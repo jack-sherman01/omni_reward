@@ -1,0 +1,14 @@
+type: "asg_vision"
+goal_text: "robot hand holding the red block above the bin"
+baseline_text: "red block on table; hand far from the bin"
+use_llm_tuner: true
+alpha_default: 0.6
+lambda_default: 0.8
+caption:
+  max_length: 64
+  temperature: 0.2
+encoder:
+  model_name: "sentence-transformers/all-mpnet-base-v2" # placeholder
+smooth:
+  use_sliding_window: false
+  window_size: 5

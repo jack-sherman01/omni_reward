@@ -1,0 +1,11 @@
+# env config example for validating the pipeline
+id: "ToyGridWorld-v0"
+size: 16
+goal_position: [10, 10]
+start_position: [1, 1]
+render:
+  resolution: [84, 84]
+  color_scheme: "blocks"
+camera:
+  noise_std: 0.0
+  occlusion_prob: 0.0
