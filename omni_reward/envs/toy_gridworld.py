@@ -38,7 +38,7 @@ class ToyGridWorld(gymnasium.Env):
             self.agent_pos[0] = max(self.agent_pos[0] - 1, 0)
         elif action == 3: # right
             self.agent_pos[0] = min(self.agent_pos[0] + 1, self.size - 1)
-
+        # TODO: use reward? like OmniReward, baseline could be distance-based?
         done = np.array_equal(self.agent_pos, self.goal)
         return self._get_observation(), 0.0, done, {}
 

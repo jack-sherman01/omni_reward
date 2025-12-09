@@ -8,6 +8,7 @@ class TactileCaptioner:
         pass
 
     def to_caption(self, tactile_vec):
+        # TODO: these thresholds are not properly set, just for illustration
         if tactile_vec is None:
             return "no tactile information"
         if tactile_vec.max() < 0.1:
