@@ -78,7 +78,23 @@ except ImportError:
 
 
 class VLMBase(abc.ABC):
-    """Abstract base class for Vision-Language Models"""
+    """
+    Abstract base class for Vision-Language Models.
+    
+    This class defines the interface that all VLM implementations must follow.
+    Subclasses must implement get_text_embedding, get_image_embedding, and
+    evaluate_task_progress methods.
+    
+    Methods:
+        get_text_embedding(text): Compute normalized text embedding vector
+        get_image_embedding(image): Compute normalized image embedding vector
+        evaluate_task_progress(image, task_description, history_images): 
+            Evaluate task completion progress
+    
+    Note:
+        - All embeddings should be L2-normalized for cosine similarity computation
+        - Image inputs should support both numpy arrays and PIL Images
+    """
 
     @abc.abstractmethod
     def get_text_embedding(self, text: str) -> np.ndarray:
@@ -102,7 +118,36 @@ class VLMBase(abc.ABC):
 
 
 class CLIPLocalVLM(VLMBase):
-    """VLM implementation using local CLIP model"""
+    """
+    VLM implementation using local CLIP model.
+    
+    CLIP (Contrastive Language-Image Pre-training) provides fast and efficient
+    text-image embedding computation suitable for similarity-based rewards.
+    
+    Args:
+        model_name (str): Hugging Face model name. Default: "openai/clip-vit-base-patch32"
+            Available models: "openai/clip-vit-base-patch16", "openai/clip-vit-large-patch14"
+        device (str): Device to run model on. "auto", "cuda", or "cpu". Default: "auto"
+    
+    Requirements:
+        pip install torch transformers pillow
+    
+    Model Info:
+        - Size: ~400MB (ViT-B/32), ~600MB (ViT-B/16), ~1.7GB (ViT-L/14)
+        - First run will download model from Hugging Face Hub
+        - Embedding dimension: 512 (ViT-B) or 768 (ViT-L)
+    
+    Example:
+        >>> vlm = CLIPLocalVLM(device="cuda")
+        >>> text_emb = vlm.get_text_embedding("a red cube on a table")
+        >>> image_emb = vlm.get_image_embedding(observation)
+        >>> similarity = np.dot(text_emb, image_emb)  # cosine similarity
+    
+    Note:
+        - Embeddings are L2-normalized, so dot product equals cosine similarity
+        - Supports channel-first (C,H,W) and channel-last (H,W,C) image formats
+        - GPU recommended for faster inference but CPU works fine
+    """
 
     def __init__(self, model_name: str = "openai/clip-vit-base-patch32", device: str = "auto"):
         if torch is None or CLIPModel is None:
@@ -169,7 +214,42 @@ class CLIPLocalVLM(VLMBase):
 
 
 class LocalLLaVAVLM(VLMBase):
-    """VLM implementation using local LLaVA model"""
+    """
+    VLM implementation using local LLaVA model.
+    
+    LLaVA (Large Language and Vision Assistant) provides sophisticated visual
+    reasoning capabilities for detailed task evaluation. Uses CLIP internally
+    for embedding computation.
+    
+    Args:
+        model_name (str): Hugging Face model name. Default: "llava-hf/llava-1.5-7b-hf"
+            Available: "llava-hf/llava-1.5-13b-hf", "llava-hf/llava-v1.6-mistral-7b-hf"
+        device (str): Device to run model on. "auto", "cuda", or "cpu". Default: "auto"
+        clip_model (str): CLIP model for embeddings. Default: "openai/clip-vit-base-patch32"
+    
+    Requirements:
+        pip install torch transformers pillow accelerate
+    
+    Model Info:
+        - Size: ~7GB (7B model), ~13GB (13B model)
+        - Requires significant GPU memory (16GB+ recommended for 7B)
+        - Uses fp16 on CUDA for memory efficiency
+        - First run will download model from Hugging Face Hub
+    
+    Example:
+        >>> vlm = LocalLLaVAVLM(device="cuda")
+        >>> result = vlm.evaluate_task_progress(
+        ...     image=observation,
+        ...     task_description="Pick up the red block"
+        ... )
+        >>> print(f"Progress: {result['estimated_progress']}")
+    
+    Note:
+        - GPU with 16GB+ VRAM strongly recommended
+        - CPU inference is very slow (minutes per evaluation)
+        - Embeddings are computed via internal CLIP model
+        - Task evaluation uses LLaVA's language generation capability
+    """
 
     def __init__(
         self,
