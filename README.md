@@ -95,8 +95,12 @@ captioner = VLMCaptioner(
 encoder = TextEncoder(model_name="all-MiniLM-L6-v2", device="cpu")
 
 reward_fn = OmniRewardInterface(captioner=captioner, text_encoder=encoder)
-reward = reward_fn(scene_image, timestep, "the robot stacks the blue block")
+reward_fn.start_episode(goal_text="the robot stacks the blue block")
+reward = reward_fn.step(scene_image)
 ```
+
+You can still call ``reward_fn(scene_image, timestep, goal_text)`` directly when you
+need manual control over timesteps (e.g., when episodes reset asynchronously).
 
 The first call stores the baseline caption automatically, and subsequent calls
 return reward equal to the difference between consecutive potentials.

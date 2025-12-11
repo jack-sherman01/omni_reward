@@ -47,10 +47,14 @@ def main() -> None:
         lambda_=1.0,
     )
 
-    for t, image_path in enumerate(args.images):
+    reward_fn.start_episode(goal_text=args.goal)
+
+    for image_path in args.images:
         image = load_image(image_path)
-        reward = reward_fn(image, timestep=t, goal_text=args.goal)
-        print(f"t={t:02d} path={image_path} reward={reward:.5f}")
+        reward = reward_fn.step(image)
+        print(
+            f"t={reward_fn.timestep:02d} path={image_path} reward={reward:.5f}"
+        )
 
 if __name__ == "__main__":
     main()

@@ -6,8 +6,9 @@ CAPTION_TEMPLATES: Dict[str, str] = { # you can add and edit prompts here by add
     "structured_v1": (
         "You are a robotics perception module. "
         "Describe the scene shown in the image with a focus on manipulable objects, "
-        "and their spatial relationships."
+        "and their precise directional spatial relationships. "
         "Focus on how the scene relates to this goal: {goal}. "
+        "Be extremely specific when it comes to distances and angles. Do not be vague."
         "Respond ONLY in JSON with the following structure:\n"
         "{{\n"
         "  \"caption\": \"one sentence summary\",\n"
