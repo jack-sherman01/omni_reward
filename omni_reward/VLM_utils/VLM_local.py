@@ -59,6 +59,7 @@ Author: OmniReward Team
 """
 
 import abc
+import json
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -75,6 +76,8 @@ except ImportError:
     torch = None
     CLIPModel = None
     CLIPProcessor = None
+
+from omni_reward.VLM_utils.templates import get_caption_template
 
 
 class VLMBase(abc.ABC):
@@ -114,6 +117,16 @@ class VLMBase(abc.ABC):
         history_images: Optional[List[Union[np.ndarray, "Image.Image"]]] = None,
     ) -> Dict[str, Any]:
         """Evaluate task progress based on current image and task description"""
+        pass
+
+    @abc.abstractmethod
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "structured_v1",
+        goal: Optional[str] = None,
+    ) -> str:
+        """Generate a textual caption following the requested template."""
         pass
 
 
@@ -211,6 +224,16 @@ class CLIPLocalVLM(VLMBase):
             "progress_delta": progress_delta,
             "estimated_progress": (current_similarity + 1) / 2,  # Normalize to [0, 1]
         }
+
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "structured_v1",
+        goal: Optional[str] = None,
+    ) -> str:
+        raise NotImplementedError(
+            "CLIPLocalVLM cannot produce textual captions. Use a generative VLM such as LLaVA."
+        )
 
 
 class LocalLLaVAVLM(VLMBase):
@@ -329,3 +352,30 @@ Format: Progress: X.X | Explanation: ...
             "explanation": response,
             "completed": progress >= 0.95,
         }
+
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "structured_v1",
+        goal: Optional[str] = None,
+    ) -> str:
+        pil_image = self._to_pil_image(image)
+        prompt = get_caption_template(template, goal)
+        formatted_prompt = f"<image>\n{prompt}\n"
+
+        inputs = self.processor(text=formatted_prompt, images=pil_image, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_new_tokens=256)
+
+        response = self.processor.decode(outputs[0], skip_special_tokens=True)
+
+        try:
+            data = json.loads(response)
+            if isinstance(data, dict) and "caption" in data:
+                return str(data["caption"])
+        except json.JSONDecodeError:
+            pass
+
+        return response.strip()

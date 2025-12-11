@@ -24,6 +24,7 @@ Features:
     - Unified VLMFactory for creating any VLM type (API or local)
     - Automatic base64 encoding for image transmission
     - JSON-based structured output parsing for task evaluation
+    - Shared caption templates (see templates.py) for consistent scene descriptions
     - Fallback handling for malformed API responses
     - Convenient get_vlm() function for quick VLM instantiation
     - Support for both numpy arrays and PIL Images as input
@@ -156,6 +157,7 @@ except ImportError:
 
 # Import base class and local VLMs for factory registration
 from .VLM_local import VLMBase, CLIPLocalVLM, LocalLLaVAVLM
+from .templates import get_caption_template
 
 
 class APIVLMBase(VLMBase):
@@ -196,13 +198,20 @@ class APIVLMBase(VLMBase):
                 text = text[3:]
             if text.endswith("```"):
                 text = text[:-3]
-            return json.loads(text.strip())
+            parsed = json.loads(text.strip())
+            if isinstance(parsed, str):
+                return {"caption": parsed}
+            return parsed
         except json.JSONDecodeError:
             return {
                 "progress": 0.0,
                 "explanation": response_text,
                 "completed": False,
+                "raw_text": response_text,
             }
+
+    def _get_caption_prompt(self, template: str, goal: Optional[str] = None) -> str:
+        return get_caption_template(template, goal)
 
     def _get_progress_prompt(self, task_description: str) -> str:
         """Generate standard prompt for task progress evaluation"""
@@ -300,6 +309,35 @@ class OpenAIVLM(APIVLMBase):
             "raw_response": response.choices[0].message.content,
         }
 
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "structured_v1",
+        goal: Optional[str] = None,
+    ) -> str:
+        base64_image = self._image_to_base64(image)
+        prompt = self._get_caption_prompt(template, goal)
+
+        response = self.client.chat.completions.create(
+            model=self.vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
+                    ],
+                }
+            ],
+            max_tokens=400,
+        )
+
+        parsed = self._parse_json_response(response.choices[0].message.content)
+        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
+        if not caption:
+            raise RuntimeError("OpenAI caption produced no text")
+        return str(caption).strip()
+
 
 class GeminiVLM(APIVLMBase):
     """VLM implementation using Google Gemini API"""
@@ -353,6 +391,22 @@ class GeminiVLM(APIVLMBase):
             "completed": result.get("completed", False),
             "raw_response": response.text,
         }
+
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "structured_v1",
+        goal: Optional[str] = None,
+    ) -> str:
+        pil_image = self._to_pil_image(image)
+        prompt = self._get_caption_prompt(template, goal)
+
+        response = self.model.generate_content([prompt, pil_image])
+        parsed = self._parse_json_response(response.text)
+        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
+        if not caption:
+            raise RuntimeError("Gemini caption produced no text")
+        return str(caption).strip()
 
 
 class QwenVLM(APIVLMBase):
@@ -452,6 +506,44 @@ class QwenVLM(APIVLMBase):
             }
         else:
             raise RuntimeError(f"Qwen vision call failed: {response.message}")
+
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "structured_v1",
+        goal: Optional[str] = None,
+    ) -> str:
+        pil_image = self._to_pil_image(image)
+        prompt = self._get_caption_prompt(template, goal)
+
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format="PNG")
+        image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"image": f"data:image/png;base64,{image_data}"},
+                    {"text": prompt},
+                ],
+            }
+        ]
+
+        response = MultiModalConversation.call(
+            model=self.model,
+            messages=messages,
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"Qwen vision call failed: {response.message}")
+
+        response_text = response.output.choices[0].message.content[0]["text"]
+        parsed = self._parse_json_response(response_text)
+        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
+        if not caption:
+            raise RuntimeError("Qwen caption produced no text")
+        return str(caption).strip()
 
 
 class ClaudeVLM(APIVLMBase):
@@ -572,6 +664,46 @@ class ClaudeVLM(APIVLMBase):
             "completed": result.get("completed", False),
             "raw_response": response_text,
         }
+
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "structured_v1",
+        goal: Optional[str] = None,
+    ) -> str:
+        base64_image = self._image_to_base64(image)
+        prompt = self._get_caption_prompt(template, goal)
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=400,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": base64_image,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt,
+                        },
+                    ],
+                }
+            ],
+        )
+
+        response_text = response.content[0].text
+        parsed = self._parse_json_response(response_text)
+        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
+        if not caption:
+            raise RuntimeError("Claude caption produced no text")
+        return str(caption).strip()
 
 
 class VLMFactory:

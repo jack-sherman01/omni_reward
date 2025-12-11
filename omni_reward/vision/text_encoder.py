@@ -2,7 +2,7 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 
 class TextEncoder:
-    def __init__(self, model_name="all-mpnet-base-v2", device="cuda"): # example
+    def __init__(self, model_name="all-MiniLM-L6-v2", device="cpu"):
         self.device = device
         self.model = SentenceTransformer(model_name, device=device)
 

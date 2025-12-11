@@ -74,3 +74,39 @@ Right now, everything runs through:
 ```bash
 python scripts/run_omni_rl.py --train-config configs/train/gridworld.yaml
 ```
+
+## Importable reward interface
+
+You can import `OmniRewardInterface` from
+`omni_reward.reward.interface`. Instantiate it with a captioner and text encoder,
+then call it each timestep with the rendered image, timestep counter, and goal
+description:
+
+```python
+from omni_reward.reward.interface import OmniRewardInterface
+from omni_reward.vision.captioner import VLMCaptioner
+from omni_reward.vision.text_encoder import TextEncoder
+
+captioner = VLMCaptioner(
+    vlm_type="openai",              # or gemini/qwen/claude/llava
+    caption_template="structured_v1",
+    api_key="sk-...",
+)
+encoder = TextEncoder(model_name="all-MiniLM-L6-v2", device="cpu")
+
+reward_fn = OmniRewardInterface(captioner=captioner, text_encoder=encoder)
+reward = reward_fn(scene_image, timestep, "the robot stacks the blue block")
+```
+
+The first call stores the baseline caption automatically, and subsequent calls
+return reward equal to the difference between consecutive potentials.
+
+### CLI demo with OpenAI VLM
+
+The script `scripts/demo_reward_interface.py` walks through a sequence of images
+and prints the shaped reward at every timestep. It uses the OpenAI VLM template
+defined in `omni_reward/VLM_utils/templates.py` and requires an `OPENAI_API_KEY` env variable.
+
+```bash
+python scripts/demo_reward_interface.py --goal "Move the red Cheez-Its box directly on top of the red mug." ./test_images/f0.png ./test_images/f1.png 
+```
