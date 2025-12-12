@@ -1,5 +1,5 @@
 import argparse
-import gymnasium
+import gymnasium # for env interface TODO: replace with YOUR custom env interface
 import numpy as np
 
 from omni_reward.utils.config import load_config
@@ -8,7 +8,7 @@ from omni_reward.utils.seed import set_seed
 from omni_reward.envs.toy_gridworld import ToyGridWorld
 from omni_reward.envs.wrappers import ObsWrapper
 
-from omni_reward.vision.captioner import SimpleCaptioner
+from omni_reward.vision.captioner import VLMCaptioner # TODO: not completed yet
 from omni_reward.vision.text_encoder import TextEncoder
 
 from omni_reward.reward.builders import build_potential_fn
@@ -39,8 +39,16 @@ def main(train_cfg_path):
                         goal_text=reward_cfg["goal_text"],
                         baseline_text=reward_cfg["baseline_text"])
 
-    captioner = SimpleCaptioner()
-    encoder = TextEncoder()
+    captioner = VLMCaptioner(
+        vlm_type="openai", # using OpenAI for this test
+        caption_template=reward_cfg.get("caption_template", "structured_v1"),
+        vision_model=reward_cfg.get("vision_model", "gpt-4o"),
+    )
+    
+    encoder = TextEncoder(
+        model_name=reward_cfg.get("embedding_model", "all-MiniLM-L6-v2"),
+        device=reward_cfg.get("encoder_device", "cpu")
+    )
 
     potential_fn = build_potential_fn(encoder, reward_cfg)
 
