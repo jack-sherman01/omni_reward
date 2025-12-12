@@ -28,6 +28,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--encoder-device", default="cpu", help="Device for the text encoder")
     return parser.parse_args()
 
+def omni_reward_interface():
+    """
+    omni_reward_interface:
+    TODO: for everyone:  you just need to copy this method replace the reward function in your benchmark and use it directly.
+    to do so, you need to make sure you have imported the necessary modules: OmniRewardInterface, VLMCaptioner, TextEncoder, refer to line 11-13 of this file.
+    """
+    args = parse_args()
+
+    captioner = VLMCaptioner(
+        vlm_type="openai", # using OpenAI for this test
+        caption_template=args.caption_template,
+        vision_model="gpt-4o",
+    )
+
+    encoder = TextEncoder(model_name=args.embedding_model, device=args.encoder_device)
+
+    reward_fn = OmniRewardInterface(
+        captioner=captioner,
+        text_encoder=encoder,
+        alpha=args.alpha,
+        lambda_=1.0,
+    )
+
+    reward_fn.start_episode(goal_text=args.goal)
+    # TODO: get images from your env in your benchmark
+    # image = 
+    
+    reward = reward_fn.step(image)
+    return reward
+
 
 def main() -> None:
     args = parse_args()
