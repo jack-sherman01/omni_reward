@@ -49,7 +49,7 @@ class UnifiedMultimodalPotential:
         self.paraphraser = paraphraser
 
 
-    def _vision_potential(self, caption, alpha):
+    def _vision_potential(self, caption, alpha, obs=None):
         captions = [caption]
 
         if self.paraphraser:
@@ -80,7 +80,7 @@ class UnifiedMultimodalPotential:
     def compute(self, obs, caption, alpha, lambda_):
         tactile_vec = obs.get("tactile", None)
 
-        phi_v = self._vision_potential(caption, alpha)
+        phi_v = self._vision_potential(caption, alpha, obs = obs.get("image", None)) #TODO: check this：no obs input?
         phi_t = self._tactile_potential(tactile_vec)
 
         return lambda_ * phi_v + (1 - lambda_) * phi_t
