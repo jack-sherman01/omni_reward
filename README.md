@@ -49,6 +49,7 @@ def load_image(path: Path) -> np.ndarray:
 
 goal_text = "Move the red Cheez-Its box directly on top of the red mug."
 
+# Create the reward function
 reward_fn = omni_reward_interface(
     goal = goal_text
     # pass in other optional input parameters here, such as the following:
@@ -60,7 +61,7 @@ reward_fn = omni_reward_interface(
 
 # TODO: get images from your env in your benchmark
 image = load_image(image_path)
-reward = reward_fn.step(image)
+reward = reward_fn.get_current_reward(image)
 ```
 
 The first caption observed in an episode becomes the baseline description. On
@@ -69,7 +70,7 @@ and that baseline relative to the goal description.
 
 ## Implementing your own VLM provider
 
-- To swap VLM providers, pass the matching `vlm_type` and/or `vision_model` as function arguments. 
+- To swap VLM providers, pass the matching `vlm_type` and/or `vision_model` as function arguments in reward_fn = omni_reward_interface(). 
 - If your VLM provider is not available, register them through `omni_reward/VLM_utils/VLM_api.py`.
 - To change caption prompts, add/edit templates in `omni_reward/VLM_utils/templates.py` and reference them via the `caption_template` argument.
 

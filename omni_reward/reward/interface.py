@@ -192,9 +192,9 @@ class OmniRewardInterface:
         self._record_step(timestep=timestep, image_caption=image_caption, potential=potential, reward=reward)
         return reward
 
-    def step(self, scene_image: Any, goal_text: Optional[str] = None) -> float:
+    def get_current_reward(self, scene_image: Any, goal_text: Optional[str] = None) -> float:
         """Streaming-friendly alias that only requires the latest image.
-
+        # NOTE: Heng changed the method name from step to get_current_reward to avoid confusion from step() in common RL libraries.
         Parameters
         ----------
         scene_image:

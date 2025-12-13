@@ -36,10 +36,10 @@ def main():
 
     # TODO: get images from your env in your benchmark
     # image = 
-    # reward = reward_fn.step(image)
+    # reward = reward_fn.get_current_reward(image)
     for image_path in args.images:
         image = load_image(image_path)
-        reward = reward_fn.step(image)
+        reward = reward_fn.get_current_reward(image)
         print(f"t={reward_fn.timestep:02d} path={image_path} reward={reward:.5f}")
 
 if __name__ == "__main__":

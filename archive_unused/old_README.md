@@ -96,7 +96,7 @@ encoder = TextEncoder(model_name="all-MiniLM-L6-v2", device="cpu")
 
 reward_fn = OmniRewardInterface(captioner=captioner, text_encoder=encoder)
 reward_fn.start_episode(goal_text="the robot stacks the blue block")
-reward = reward_fn.step(scene_image)
+reward = reward_fn.get_current_reward(scene_image)
 ```
 
 You can still call ``reward_fn(scene_image, timestep, goal_text)`` directly when you
