@@ -1,13 +1,8 @@
-"""Simple importable interface for computing semantic rewards.
-
-The interface hides the potential-based reward shaping logic behind a stateful
-class so RL agents can call it each timestep with just the rendered image, the
-current timestep, and the textual goal description.
-"""
+"""Small, stateful interface for turning images into semantic rewards."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional, Protocol, Sequence, Any, Dict, List
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Protocol, Sequence
 
 import numpy as np
 
@@ -15,14 +10,14 @@ from omni_reward.reward.multimodal import UnifiedMultimodalPotential
 
 
 class Captioner(Protocol):
-    """Minimal protocol required for captioning models. (delete later)"""
+    """Minimal protocol required for captioning models."""
 
     def caption(self, image: Any, goal_text: Optional[str] = None) -> str:  # pragma: no cover
         ...
 
 
 class TextEncoder(Protocol):
-    """Minimal protocol required for text encoders used by the potential. (delete later)"""
+    """Minimal protocol required for text encoders used by the potential."""
 
     def encode_one(self, text: str) -> np.ndarray:  # pragma: no cover - protocol definition
         ...
@@ -32,69 +27,57 @@ class TextEncoder(Protocol):
 
 
 @dataclass
-class StepRecord:
+class RewardStep:
     """Container for per-timestep bookkeeping."""
 
     timestep: int
-    caption: str
+    image_caption: str
     potential: float
     reward: float
 
 
-@dataclass
-class EpisodeState:
-    """Mutable state tracked across RL episodes."""
-
-    timestep: int = -1
-    goal_text: Optional[str] = None
-    baseline_text: Optional[str] = None
-    prev_potential: Optional[float] = None
-    history: List[StepRecord] = field(default_factory=list)
-
-
-@dataclass
 class OmniRewardInterface:
     """High-level wrapper for the semantic potential reward.
 
-    Parameters
-    ----------
-    captioner:
-        Object capable of turning an image tensor/array into a text caption.
-    text_encoder:
-        Encoder used by :class:`UnifiedMultimodalPotential`.
-    alpha:
-        Weight applied inside the vision potential (default 0.6 as per design).
-    lambda_:
-        Blend between vision and tactile potentials. Set to 1.0 to ignore tactile inputs.
+    The class hides all potential-based shaping logic so the caller only needs to provide
+         an image, 
+         an optional timestep, 
+         and the goal text. 
+    Internally, the first generated caption becomes the baseline description and the reward is the difference between consecutive potentials.
     """
 
-    captioner: Captioner
-    text_encoder: TextEncoder
-    alpha: float = 0.6
-    lambda_: float = 1.0
+    def __init__(
+        self,
+        captioner: Captioner,
+        text_encoder: TextEncoder,
+        *,
+        alpha: float = 0.6,
+        lambda_: float = 1.0,
+        store_history: bool = True,
+    ) -> None:
+        self.captioner = captioner
+        self.text_encoder = text_encoder
+        self.alpha = alpha
+        self.lambda_ = lambda_
+        self.store_history = store_history
 
-    _potential: Optional[UnifiedMultimodalPotential] = field(default=None, init=False, repr=False)
-    _state: EpisodeState = field(default_factory=EpisodeState, init=False, repr=False)
-
-    @property
-    def goal_text(self) -> Optional[str]:  # pragma: no cover - trivial accessor
-        return self._state.goal_text
-
-    @property
-    def baseline_text(self) -> Optional[str]:  # pragma: no cover - trivial accessor
-        return self._state.baseline_text
-
-    @property
-    def prev_potential(self) -> Optional[float]:  # pragma: no cover - trivial accessor
-        return self._state.prev_potential
+        self.reset_episode()
 
     @property
-    def timestep(self) -> int:  # pragma: no cover - trivial accessor
-        return self._state.timestep
+    def history(self) -> List[RewardStep]:  # pragma: no cover - trivial accessor
+        """Return a shallow copy of the per-episode history."""
 
-    @property
-    def history(self) -> List[StepRecord]:  # pragma: no cover - trivial accessor
-        return list(self._state.history)
+        return list(self._history)
+
+    def reset_episode(self, goal_text: Optional[str] = None) -> None:
+        """Clear cached state so a new episode can start."""
+
+        self._potential = None
+        self.goal_text = goal_text
+        self.baseline_caption = None
+        self.prev_potential = None
+        self.timestep = -1
+        self._history = []
 
     def start_episode(
         self,
@@ -114,56 +97,73 @@ class OmniRewardInterface:
             Skip re-captioning when the baseline caption is already known.
         """
 
-        self.reset_episode()
-        self._state.goal_text = goal_text
-
-        if baseline_image is None and baseline_caption is None:
-            return
+        self.reset_episode(goal_text=goal_text)
 
         caption = baseline_caption
-        if caption is None:
+        if caption is None and baseline_image is not None:
             caption = self.captioner.caption(baseline_image, goal_text=goal_text)
 
-        self._state.baseline_text = caption
+        if caption is None:
+            return
 
+        self.baseline_caption = caption
         if baseline_image is None:
-            # Without an image we cannot compute the initial potential yet.
             return
 
         potential = self._compute_potential(baseline_image, caption)
-        self._state.prev_potential = potential
-        self._state.timestep = 0
-        self._state.history.append(
-            StepRecord(timestep=0, caption=caption, potential=potential, reward=0.0)
+        self.prev_potential = potential
+        self.timestep = 0
+        self._record_step(timestep=0, caption=caption, potential=potential, reward=0.0)
+
+    def _record_step(self, *, timestep: int, image_caption: str, potential: float, reward: float) -> None:
+        """ Save to history for logging purposes """ 
+        if not self.store_history:
+            return
+        self._history.append(
+            RewardStep(timestep=timestep, image_caption=image_caption, potential=potential, reward=reward)
         )
 
-    def reset_episode(self) -> None:
-        """Clears baseline/potential information between episodes."""
-        self._potential = None
-        self._state = EpisodeState()
+    def _resolve_goal(self, goal_text: Optional[str]) -> str:
+        if goal_text is not None:
+            if self.goal_text is not None and goal_text != self.goal_text:
+                raise ValueError("Goal text changed during an episode. Call reset_episode() before switching goals.")
+            self.goal_text = goal_text
 
-    def _ensure_goal(self, goal_text: str) -> None:
         if self.goal_text is None:
-            self._state.goal_text = goal_text
-        elif goal_text != self.goal_text:
-            raise ValueError(
-                "Goal text changed during an episode. Call reset_episode() before switching goals."
-            )
+            raise ValueError("Goal text must be provided before computing rewards.")
 
-    def _compute_potential(self, scene_image: Any, caption: str) -> float:
-        if self._potential is None:
-            if self.goal_text is None or self.baseline_text is None:
-                raise RuntimeError("Potential requested before goal/baseline were initialized.")
-            self._potential = UnifiedMultimodalPotential(
-                text_encoder=self.text_encoder,
-                vision_goal_text=self.goal_text,
-                baseline_text=self.baseline_text,
-            )
+        return self.goal_text
 
-        obs: Dict[str, Any] = {"image": scene_image, "tactile": None}
+    def _resolve_timestep(self, supplied_timestep: Optional[int], incoming_goal: Optional[str]) -> int:
+        if supplied_timestep is None:
+            return 0 if self.timestep < 0 else self.timestep + 1
+
+        if self.timestep >= 0 and supplied_timestep <= self.timestep:
+            cached_goal = incoming_goal or self.goal_text
+            self.reset_episode(goal_text=cached_goal)
+
+        return supplied_timestep
+
+    def _prime_baseline(self, caption: str) -> None:
+        if self.baseline_caption is None:
+            self.baseline_caption = caption
+            self._potential = None  # Force re-instantiation with the new baseline.
+
+    def _ensure_potential_ready(self) -> None:
+        if self._potential is not None:
+            return
+        if self.goal_text is None or self.baseline_caption is None:
+            raise RuntimeError("Potential requested before goal/baseline were initialized.")
+        self._potential = UnifiedMultimodalPotential(
+            text_encoder=self.text_encoder,
+            vision_goal_text=self.goal_text,
+            baseline_text=self.baseline_caption,
+        )
+
+    def _compute_potential(self, image_caption: str) -> float:
+        self._ensure_potential_ready()
         potential = self._potential.compute(
-            obs=obs,
-            caption=caption,
+            image_caption=image_caption,
             alpha=self.alpha,
             lambda_=self.lambda_,
         )
@@ -175,52 +175,22 @@ class OmniRewardInterface:
         timestep: Optional[int] = None,
         goal_text: Optional[str] = None,
     ) -> float:
-        """Return shaped reward for the provided scene observation.
+        """Return the shaped reward for the provided scene observation."""
 
-        Parameters
-        ----------
-        scene_image: Any
-            2D (HxW or CxHxW) image tensor/array used by the captioner.
-        timestep: Optional[int]
-            Current environment timestep. When omitted the interface tracks it
-            internally and simply assumes the next sequential step.
-        goal_text: Optional[str]
-            Natural language description of the desired outcome. Provide it once
-            (either via :meth:`start_episode` or the first :meth:`step`) and it
-            will remain locked in for the episode.
-        """
-        if timestep is None:
-            timestep = 0 if self._state.timestep < 0 else self._state.timestep + 1
-        elif self._state.timestep >= 0 and timestep <= self._state.timestep:
-            # Episode restarted (either at 0 or manual reset). Preserve caller goal if provided.
-            cached_goal = goal_text or self.goal_text
-            self.reset_episode()
-            if cached_goal is not None:
-                self._state.goal_text = cached_goal
+        timestep = self._resolve_timestep(timestep, goal_text)
+        resolved_goal = self._resolve_goal(goal_text)
 
-        if goal_text is not None:
-            self._ensure_goal(goal_text)
-        elif self.goal_text is None:
-            raise ValueError("Goal text must be provided at least once before computing rewards.")
+        image_caption = self.captioner.caption(scene_image, goal_text=resolved_goal)
+        self._prime_baseline(image_caption)
 
-        caption = self.captioner.caption(scene_image, goal_text=goal_text)
-
-        if self.baseline_text is None:
-            # Use the very first caption as the baseline reference.
-            self._state.baseline_text = caption
-
-        potential = self._compute_potential(scene_image, caption)
-        prev_potential = self._state.prev_potential
+        potential = self._compute_potential(image_caption)
+        prev_potential = self.prev_potential
         reward = 0.0 if prev_potential is None else potential - prev_potential
 
-        self._state.prev_potential = potential
-        self._state.timestep = timestep
-        self._state.history.append(
-            StepRecord(timestep=timestep, caption=caption, potential=potential, reward=reward)
-        )
+        self.prev_potential = potential
+        self.timestep = timestep
+        self._record_step(timestep=timestep, image_caption=image_caption, potential=potential, reward=reward)
         return reward
-
-    __call__ = compute_reward
 
     def step(self, scene_image: Any, goal_text: Optional[str] = None) -> float:
         """Streaming-friendly alias that only requires the latest image.
@@ -234,3 +204,5 @@ class OmniRewardInterface:
         """
 
         return self.compute_reward(scene_image=scene_image, timestep=None, goal_text=goal_text)
+
+    __call__ = compute_reward

@@ -1,9 +1,7 @@
 """Captioner implementations used by the reward interface."""
 from __future__ import annotations
 
-from typing import Any, Optional
-
-from torchvision import transforms
+from typing import Any, List, Optional
 
 from omni_reward.VLM_utils.VLM_api import get_vlm
 from omni_reward.VLM_utils.VLM_local import VLMBase
@@ -27,7 +25,7 @@ class VLMCaptioner:
     def caption(self, image: Any, goal_text: Optional[str] = None) -> str:
         goal = goal_text or self.goal_context
         caption_text = self.vlm.generate_caption(image, template=self.caption_template, goal=goal)
-        print("[debug] Caption Text: ", caption_text)
+        print("[VLMCaptioner] caption:", caption_text)
         return caption_text
 
     def caption_multi(self, image: Any, n: int = 1, goal_text: Optional[str] = None):
