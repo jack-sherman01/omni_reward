@@ -84,7 +84,7 @@ class OmniRewardInterface:
         if not hasattr(self.captioner, 'vlm'):
             # Fallback if VLM is not available
             return [goal_text]
-            
+        # NOTE:I think here below we dont need to indicate the size of the subgoals, just decompose into simpler steps.
         decomposition_prompt = f"""
         Please decompose the following robot task goal into a sequence of simpler subgoals.
         Each subgoal should be achievable and lead progressively toward the final goal.
@@ -107,7 +107,9 @@ class OmniRewardInterface:
                     import re
                     cleaned = re.sub(r'^[\d]+[.\)]\s*', '', cleaned)
                     if cleaned:
-                        subgoals.append(cleaned)
+                        # enrich the goal description after decomposition
+                        rich_cleaned = VLMCaptioner.enrich_goal(cleaned)
+                        subgoals.append(rich_cleaned)
             
             if not subgoals:
                 return [goal_text]
