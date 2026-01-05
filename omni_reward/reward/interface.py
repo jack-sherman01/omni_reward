@@ -57,7 +57,7 @@ class OmniRewardInterface:
         store_history: bool = True,
     ) -> None:
         self.captioner = captioner
-        self.text_encoder = VLMCaptioner.enrich_goal(text_encoder)
+        self.text_encoder = text_encoder
         self.alpha = alpha
         self.lambda_ = lambda_
         self.store_history = store_history
@@ -74,7 +74,7 @@ class OmniRewardInterface:
         """Clear cached state so a new episode can start."""
 
         self._potential = None
-        self.goal_text = self.enrich_goal(goal_text)
+        self.goal_text = VLMCaptioner.enrich_goal(goal_text)
         self.baseline_caption = None
         self.prev_potential = None
         self.timestep = -1
