@@ -79,7 +79,7 @@ class OmniRewardInterface:
             
         Returns
         -------
-        List of subgoals in order of execution.
+        List of subgoals (enriched not simple) in order of execution.
         """
         if not hasattr(self.captioner, 'vlm'):
             # Fallback if VLM is not available
