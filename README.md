@@ -68,6 +68,76 @@ The first caption observed in an episode becomes the baseline description. On
 later steps the reward is the potential difference between the current caption
 and that baseline relative to the goal description.
 
+## if you use subgoals:
+you just need to create a new wraped env below the original env (env = gym.make(ENV_ID)):
+
+```python
+wrapped_env = OmniRewardWrapper(env, captioner, text_encoder, goal_text, use_subgoals=True)
+
+``` 
+then you should use the wrapped_env as normal gym env. The reward will be calculated based on subgoals: for example,
+
+```python
+obs, reward, done, info = wrapped_env.step(action)
+```
+
+for your reference, here below is an example useage of the wrapped env:
+
+```python
+import gym
+
+from omni_reward.examples.env_wrapper import OmniRewardWrapper
+from omni_reward.vision.captioner import VLMCaptioner
+# NOTE: replace TextEncoderImpl with the actual encoder class in omni_reward/vision/text_encoder.py
+from omni_reward.vision.text_encoder import TextEncoderImpl  # TODO: check file for the right class
+
+ENV_ID = "CartPole-v1"  # or your own env id
+
+def main():
+    # 1) original env
+    env = gym.make(ENV_ID)
+
+    # 2) build captioner and text encoder (same config as you would use for omni_reward_interface)
+    captioner = VLMCaptioner(
+        vlm_type="openai",          # or your backend
+        caption_template="structured_v1",
+    )
+    text_encoder = TextEncoderImpl(
+        model_name="all-MiniLM-L6-v2",  # for example; check your implementation
+    )
+
+    goal_text = "Move the red Cheez-Its box directly on top of the red mug."
+
+    # 3) wrap env with subgoals enabled
+    wrapped_env = OmniRewardWrapper(
+        env=env,
+        captioner=captioner,
+        text_encoder=text_encoder,
+        goal_text=goal_text,
+        use_subgoals=True,  # this flag turns on subgoal decomposition & subgoal-based reward
+    )
+
+    # 4) use wrapped_env as a normal Gym env in your rollout
+    obs = wrapped_env.reset()
+    done = False
+    while not done:
+        action = wrapped_env.action_space.sample()
+        obs, reward, done, info = wrapped_env.step(action)
+
+        # optional: inspect subgoal info
+        if "omni_reward_info" in info:
+            rinfo = info["omni_reward_info"]
+            print(
+                f"reward={reward:.3f}, "
+                f"subgoal={rinfo['current_subgoal']!r}, "
+                f"progress={rinfo['progress']:.2f}"
+            )
+
+if __name__ == "__main__":
+    main()
+```
+
+
 ## Implementing your own VLM provider
 
 - To swap VLM providers, pass the matching `vlm_type` and/or `vision_model` as function arguments in reward_fn = omni_reward_interface(). 
