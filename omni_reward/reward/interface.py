@@ -8,6 +8,11 @@ import numpy as np
 
 from omni_reward.reward.multimodal import UnifiedMultimodalPotential
 from omni_reward.vision.captioner import VLMCaptioner
+from omni_reward.LLM_utils import (
+    get_llm_client,
+    enrich_goal_description,
+    decompose_goal_to_subgoals,
+)
 
 
 class Captioner(Protocol):
@@ -108,7 +113,8 @@ class OmniRewardInterface:
                     cleaned = re.sub(r'^[\d]+[.\)]\s*', '', cleaned)
                     if cleaned:
                         # enrich the goal description after decomposition
-                        rich_cleaned = VLMCaptioner.enrich_goal(cleaned)
+                        rich_cleaned = enrich_goal_description(cleaned, domain="robotics") # using LLM 
+                        # rich_cleaned = VLMCaptioner.enrich_goal(cleaned) # using VLM
                         subgoals.append(rich_cleaned)
             
             if not subgoals:
@@ -145,7 +151,7 @@ class OmniRewardInterface:
             Whether to automatically decompose the goal into subgoals.
         """
         if auto_decompose:
-            self.subgoals = self.decompose_goal(goal_text)
+            self.subgoals = decompose_goal_to_subgoals(goal_text)
         else:
             self.subgoals = [goal_text]
             
@@ -255,7 +261,8 @@ class OmniRewardInterface:
         """Clear cached state so a new episode can start."""
 
         self._potential = None
-        self.goal_text = VLMCaptioner.enrich_goal(goal_text)
+        self.goal_text = enrich_goal_description(goal_text, domain="robotics") # using LLM
+        # self.goal_text = VLMCaptioner.enrich_goal(goal_text) # using VLM
         self.baseline_caption = None
         self.prev_potential = None
         self.timestep = -1
