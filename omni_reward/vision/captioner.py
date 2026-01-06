@@ -44,11 +44,12 @@ class VLMCaptioner:
         # Define questions to extract rich information about the goal
         # TODO: discuss these questions with team and refine
         enrichment_questions = [
-            f"what is the goal state of robot in the end to achieve: '{goal_text}'?",
+            f"what is the goal state of robot and environment in the end (final state, described with a detailed description): '{goal_text}'?",
+            f"would the goal: '{goal_text}' involve specific interaction or contact with objects or environment?",
             f"What are the key visual elements or objects involved in the goal: '{goal_text}'?",
-            f"What specific actions or movements are required to achieve: '{goal_text}'?",
+            # f"What specific actions or movements are required to achieve: '{goal_text}'?",
             f"What would be the success criteria or indicators for completing: '{goal_text}'?",
-            f"What are potential intermediate steps or milestones for: '{goal_text}'?",
+            # f"What are potential intermediate steps or milestones for: '{goal_text}'?",
             f"What spatial relationships or positions are important for: '{goal_text}'?"
         ]
         
@@ -58,6 +59,7 @@ class VLMCaptioner:
         for question in enrichment_questions:
             try:
                 # Use VLM to answer each question
+                # TODO: consider using a more advanced LLM for better enrichment
                 response = self.vlm.generate_text(question)
                 if response and response.strip():
                     enriched_parts.append(response.strip())
