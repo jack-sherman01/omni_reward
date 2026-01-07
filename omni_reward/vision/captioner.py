@@ -34,7 +34,37 @@ class VLMCaptioner:
     def set_goal_context(self, goal_text: Optional[str]) -> None:
         self.goal_context = goal_text
 
-    def enrich_goal(self, goal_text: Optional[str]) -> Optional[str]:
+    def enrich_state(self, state_description: Optional[str], baseline_image: Optional[Any] = None) -> Optional[str]:
+        """Hook for state description enrichment for accelerating the learning. so that it is more informative for embedding and similarity comparison.
+        This function uses the VLM itself to generate additional context about the state."""
+        
+        if not state_description:
+            return state_description
+            
+        # Define questions to extract rich information about the state
+        enrichment_questions = [
+            f"What are the key visual elements or objects present in the state: '{state_description} and {baseline_image}'?",
+            f"Are there any notable spatial relationships or arrangements of objects in the state: '{state_description} and {baseline_image}'?",
+            f"what is the current state of robot and environment in the state: '{state_description} and {baseline_image}'?, like positions, orientations, and interactions. or interactions between robot and objects.",
+            f"Are there any potential obstacles or challenges visible in the state: '{state_description} and {baseline_image}'?",
+        ]   
+        # Collect enriched information from VLM
+        enriched_parts = [f"Original State: {state_description}"]
+        for question in enrichment_questions:
+            try:
+                # Use VLM to answer each question
+                response = self.vlm.generate_caption(baseline_image, template=question)
+                if response and response.strip():
+                    enriched_parts.append(response.strip())
+            except Exception as e:
+                print(f"[VLMCaptioner] Warning: Failed to enrich state with question '{question}': {e}")
+                continue
+        # Combine all information into enriched state description
+        # TODO : using a better formatting strategy by LLM instead of simple joining. : NOTE: done in LLM_utils.py
+        enriched_state = " | ".join(enriched_parts)
+        return enriched_state
+
+    def enrich_goal(self, goal_text: Optional[str], goal_image: Optional[Any] = None) -> Optional[str]:
         """Hook for goal text enrichment for accelerating the learning. so that it is more informative for embedding and similarity comparison.
         This function uses the VLM itself to generate additional context about the goal."""
         
@@ -45,12 +75,12 @@ class VLMCaptioner:
         # TODO: discuss these questions with team and refine
         enrichment_questions = [
             f"what is the goal state of robot and environment in the end (final state, described with a detailed description): '{goal_text}'?",
-            f"would the goal: '{goal_text}' involve specific interaction or contact with objects or environment?",
-            f"What are the key visual elements or objects involved in the goal: '{goal_text}'?",
+            f"would the goal: '{goal_text} and {goal_image}' involve specific interaction or contact with objects or environment?",
+            f"What are the key visual elements or objects involved in the goal: '{goal_text} and {goal_image}'?",
             # f"What specific actions or movements are required to achieve: '{goal_text}'?",
-            f"What would be the success criteria or indicators for completing: '{goal_text}'?",
+            f"What would be the success criteria or indicators for completing: '{goal_text} and {goal_image}'?",
             # f"What are potential intermediate steps or milestones for: '{goal_text}'?",
-            f"What spatial relationships or positions are important for: '{goal_text}'?"
+            f"What spatial relationships or positions are important for: '{goal_text} and {goal_image}'?"
         ]
         
         # Collect enriched information from VLM
@@ -60,7 +90,7 @@ class VLMCaptioner:
             try:
                 # Use VLM to answer each question
                 # TODO: consider using a more advanced LLM for better enrichment
-                response = self.vlm.generate_text(question)
+                response = self.vlm.generate_caption(goal_image, template=question)
                 if response and response.strip():
                     enriched_parts.append(response.strip())
             except Exception as e:
@@ -68,7 +98,7 @@ class VLMCaptioner:
                 continue
         
         # Combine all information into enriched goal text
-        # TODO : using a better formatting strategy by LLM instead of simple joining
+        # TODO : using a better formatting strategy by LLM instead of simple joining.: NOTE: done in LLM_utils.py
         enriched_goal = " | ".join(enriched_parts)
         
         print(f"[VLMCaptioner] Enriched goal from '{goal_text}' to: {enriched_goal}")
