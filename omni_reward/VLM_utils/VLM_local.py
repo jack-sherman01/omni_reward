@@ -102,12 +102,12 @@ class VLMBase(abc.ABC):
     @abc.abstractmethod
     def get_text_embedding(self, text: str) -> np.ndarray:
         """Compute text embedding"""
-        pass
+        raise NotImplementedError("Subclasses must implement get_text_embedding")
 
     @abc.abstractmethod
     def get_image_embedding(self, image: Union[np.ndarray, "Image.Image"]) -> np.ndarray:
         """Compute image embedding"""
-        pass
+        raise NotImplementedError("Subclasses must implement get_image_embedding")
 
     @abc.abstractmethod
     def evaluate_task_progress(
@@ -117,7 +117,7 @@ class VLMBase(abc.ABC):
         history_images: Optional[List[Union[np.ndarray, "Image.Image"]]] = None,
     ) -> Dict[str, Any]:
         """Evaluate task progress based on current image and task description"""
-        pass
+        raise NotImplementedError("Subclasses must implement evaluate_task_progress")
 
     @abc.abstractmethod
     def generate_caption(
@@ -127,7 +127,7 @@ class VLMBase(abc.ABC):
         goal: Optional[str] = None,
     ) -> str:
         """Generate a textual caption following the requested template."""
-        pass
+        raise NotImplementedError("Subclasses must implement generate_caption")
 
 
 class CLIPLocalVLM(VLMBase):
