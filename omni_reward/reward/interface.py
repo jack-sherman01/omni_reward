@@ -10,6 +10,7 @@ from omni_reward.reward.multimodal import UnifiedMultimodalPotential
 from omni_reward.vision.captioner import VLMCaptioner
 from omni_reward.LLM_utils import (
     get_llm_client,
+    enrich_state_description,
     enrich_goal_description,
     decompose_goal_to_subgoals,
 )
@@ -74,61 +75,62 @@ class OmniRewardInterface:
         
         self.reset_episode()
 
-    def decompose_goal(self, goal_text: str) -> List[str]:
-        """Decompose a final goal into ordered subgoals using VLM.
+    # not used currently
+    # def decompose_goal_vlm(self, goal_text: str) -> List[str]:
+    #     """Decompose a final goal into ordered subgoals using VLM.
         
-        Parameters
-        ----------
-        goal_text:
-            The final goal to decompose.
+    #     Parameters
+    #     ----------
+    #     goal_text:
+    #         The final goal to decompose.
             
-        Returns
-        -------
-        List of subgoals (enriched not simple) in order of execution.
-        """
-        if not hasattr(self.captioner, 'vlm'):
-            # Fallback if VLM is not available
-            return [goal_text]
-        # NOTE:I think here below we dont need to indicate the size of the subgoals, just decompose into simpler steps.
-        decomposition_prompt = f"""
-        Please decompose the following robot task goal into a sequence of simpler subgoals.
-        Each subgoal should be achievable and lead progressively toward the final goal.
+    #     Returns
+    #     -------
+    #     List of subgoals (enriched not simple) in order of execution.
+    #     """
+    #     if not hasattr(self.captioner, 'vlm'):
+    #         # Fallback if VLM is not available
+    #         return [goal_text]
+    #     # NOTE:I think here below we dont need to indicate the size of the subgoals, just decompose into simpler steps.
+    #     decomposition_prompt = f"""
+    #     Please decompose the following robot task goal into a sequence of simpler subgoals.
+    #     Each subgoal should be achievable and lead progressively toward the final goal.
         
-        Final Goal: {goal_text}
+    #     Final Goal: {goal_text}
         
-        Provide the subgoals as a numbered list, one per line.
-        """
+    #     Provide the subgoals as a numbered list, one per line.
+    #     """
         
-        try:
-            response = self.captioner.vlm.generate_text(decomposition_prompt)
-            # Parse the response to extract subgoals
-            lines = response.strip().split('\n')
-            subgoals = []
-            for line in lines:
-                # Remove numbering and clean up
-                cleaned = line.strip()
-                if cleaned and not cleaned.startswith('#'):
-                    # Remove common numbering patterns like "1.", "1)", etc.
-                    import re
-                    cleaned = re.sub(r'^[\d]+[.\)]\s*', '', cleaned)
-                    if cleaned:
-                        # enrich the goal description after decomposition
-                        rich_cleaned = enrich_goal_description(cleaned, domain="robotics") # using LLM 
-                        # rich_cleaned = VLMCaptioner.enrich_goal(cleaned) # using VLM
-                        subgoals.append(rich_cleaned)
+    #     try:
+    #         response = self.captioner.vlm.generate_text(decomposition_prompt)
+    #         # Parse the response to extract subgoals
+    #         lines = response.strip().split('\n')
+    #         subgoals = []
+    #         for line in lines:
+    #             # Remove numbering and clean up
+    #             cleaned = line.strip()
+    #             if cleaned and not cleaned.startswith('#'):
+    #                 # Remove common numbering patterns like "1.", "1)", etc.
+    #                 import re
+    #                 cleaned = re.sub(r'^[\d]+[.\)]\s*', '', cleaned)
+    #                 if cleaned:
+    #                     # enrich the goal description after decomposition
+    #                     rich_cleaned = enrich_goal_description(cleaned, domain="robotics") # using LLM 
+    #                     # rich_cleaned = VLMCaptioner.enrich_goal(cleaned) # using VLM
+    #                     subgoals.append(rich_cleaned)
             
-            if not subgoals:
-                return [goal_text]
+    #         if not subgoals:
+    #             return [goal_text]
                 
-            print(f"[OmniRewardInterface] Decomposed goal into {len(subgoals)} subgoals:")
-            for i, sg in enumerate(subgoals, 1):
-                print(f"  {i}. {sg}")
+    #         print(f"[OmniRewardInterface] Decomposed goal into {len(subgoals)} subgoals:")
+    #         for i, sg in enumerate(subgoals, 1):
+    #             print(f"  {i}. {sg}")
                 
-            return subgoals
+    #         return subgoals
             
-        except Exception as e:
-            print(f"[OmniRewardInterface] Failed to decompose goal: {e}")
-            return [goal_text]
+    #     except Exception as e:
+    #         print(f"[OmniRewardInterface] Failed to decompose goal: {e}")
+    #         return [goal_text]
 
     def start_episode_with_subgoals(
         self,
@@ -262,7 +264,7 @@ class OmniRewardInterface:
 
         self._potential = None
         self.goal_text = enrich_goal_description(goal_text, domain="robotics") # using LLM
-        # self.goal_text = VLMCaptioner.enrich_goal(goal_text) # using VLM
+        # self.goal_text = VLMCaptioner.enrich_goal(goal_text, image) # using VLM
         self.baseline_caption = None
         self.prev_potential = None
         self.timestep = -1
@@ -289,19 +291,23 @@ class OmniRewardInterface:
         self.reset_episode(goal_text=goal_text)
 
         caption = baseline_caption
+        # NOTE: where is the baseline_image from?? Usually the first observation of the episode.
         if caption is None and baseline_image is not None:
             caption = self.captioner.caption(baseline_image, goal_text=goal_text)
-
+            rich_caption = enrich_state_description(caption, domain="robotics") # using LLM
+            # rich_caption = VLMCaptioner.enrich_state(caption, baseline_image) # using VLM
         if caption is None:
             return
 
-        self.baseline_caption = caption
+        self.baseline_caption = rich_caption
         if baseline_image is None:
             return
-
-        potential = self._compute_potential(baseline_image, caption)
+        # TODO: should be one arg for _compute_potential?
+        potential = self._compute_potential(rich_caption)
         self.prev_potential = potential
         self.timestep = 0
+        # TODO: record initial step with zero reward is right? reward at initial step could be negtive.
+        # TODO: I think here we can just record the caption insteasd of rich_caption
         self._record_step(timestep=0, caption=caption, potential=potential, reward=0.0)
 
     def _record_step(self, *, timestep: int, image_caption: str, potential: float, reward: float) -> None:
