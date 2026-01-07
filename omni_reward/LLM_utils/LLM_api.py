@@ -206,7 +206,51 @@ def enhance_prompt(
         print(f"[LLM_api] Warning: Failed to enhance prompt: {e}")
         return prompt
 
-
+def enrich_state_description(
+    current_state_text: str,
+    domain: str = "robotics",
+    client: Optional[LLMClient] = None,
+) -> str:
+    """LLM Enrich a state description with additional context and details.
+    
+    Parameters
+    ----------
+    current_state_text:
+        Original state description.
+    domain:
+        Task domain for context. Options: "robotics", "navigation", "manipulation".
+    client:
+        LLM client to use.
+        
+    Returns
+    -------
+    Enriched state description with additional context.
+    """
+    llm = client or get_llm_client()
+    
+    system_prompt = f"""You are a {domain} state description expert. Your task is to 
+    enrich state descriptions to make them more informative for learning algorithms."""
+    
+    user_prompt = f"""
+    Original state description: "{current_state_text}"
+    
+    Please enrich this description by adding:
+    1. Key visual elements or objects involved
+    2. the current spatial relationships of objects
+    3. the current robot state, e.g., positions, orientations, configurations
+    4. Relevant state information (Important physical interactions occurring, forces, contacts, tactile info etc.)
+    
+    Provide a single enriched description that combines all this information naturally.
+    Keep it concise but informative.
+    """
+    
+    try:
+        enriched = llm.generate(user_prompt, system_prompt=system_prompt, temperature=0.3)
+        return f"{current_state_text} | {enriched}"
+    except Exception as e:
+        print(f"[LLM_api] Warning: Failed to enrich state description: {e}")
+        return current_state_text
+    
 def enrich_goal_description(
     goal_text: str,
     domain: str = "robotics",
