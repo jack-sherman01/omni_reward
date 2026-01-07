@@ -135,7 +135,7 @@ class OmniRewardInterface:
     def start_episode_with_subgoals(
         self,
         goal_text: str,
-        baseline_image: Optional[Any] = None,
+        initial_image: Optional[Any] = None,
         baseline_caption: Optional[str] = None,
         auto_decompose: bool = True,
     ) -> None:
@@ -145,7 +145,7 @@ class OmniRewardInterface:
         ----------
         goal_text:
             The final goal to achieve.
-        baseline_image:
+        initial_image:
             Optional first observation.
         baseline_caption:
             Optional baseline caption.
@@ -161,7 +161,7 @@ class OmniRewardInterface:
         
         # Start with the first subgoal
         current_goal = self.subgoals[0] if self.subgoals else goal_text
-        self.start_episode(current_goal, baseline_image, baseline_caption)
+        self.start_episode(current_goal, initial_image, baseline_caption)
 
     def check_subgoal_completion(self, current_potential: float) -> bool:
         """Check if current subgoal is completed based on potential.
@@ -273,7 +273,7 @@ class OmniRewardInterface:
     def start_episode(
         self,
         goal_text: str,
-        baseline_image: Optional[Any] = None,
+        initial_image: Optional[Any] = None,
         baseline_caption: Optional[str] = None,
     ) -> None:
         """Reset the interface and optionally prime the baseline.
@@ -282,7 +282,7 @@ class OmniRewardInterface:
         ----------
         goal_text:
             Text goal that will remain fixed for the episode.
-        baseline_image:
+        initial_image:
             Optional first observation used to bootstrap the baseline potential.
         baseline_caption:
             Skip re-captioning when the baseline caption is already known.
@@ -291,16 +291,16 @@ class OmniRewardInterface:
         self.reset_episode(goal_text=goal_text)
 
         caption = baseline_caption
-        # NOTE: where is the baseline_image from?? Usually the first observation of the episode.
-        if caption is None and baseline_image is not None:
-            caption = self.captioner.caption(baseline_image, goal_text=goal_text)
+        # NOTE: where is the initial_image from?? Usually the first observation of the episode.
+        if caption is None and initial_image is not None:
+            caption = self.captioner.caption(initial_image, goal_text=goal_text)
             rich_caption = enrich_state_description(caption, domain="robotics") # using LLM
-            # rich_caption = VLMCaptioner.enrich_state(caption, baseline_image) # using VLM
+            # rich_caption = VLMCaptioner.enrich_state(caption, initial_image) # using VLM
         if caption is None:
             return
 
         self.baseline_caption = rich_caption
-        if baseline_image is None:
+        if initial_image is None:
             return
         # TODO: should be one arg for _compute_potential?
         potential = self._compute_potential(rich_caption)
