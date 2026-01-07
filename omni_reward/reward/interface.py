@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence
 import numpy as np
 
 from omni_reward.reward.multimodal import UnifiedMultimodalPotential
+from omni_reward.vision.captioner import VLMCaptioner
 
 
 class Captioner(Protocol):
@@ -73,7 +74,7 @@ class OmniRewardInterface:
         """Clear cached state so a new episode can start."""
 
         self._potential = None
-        self.goal_text = goal_text
+        self.goal_text = VLMCaptioner.enrich_goal(goal_text)
         self.baseline_caption = None
         self.prev_potential = None
         self.timestep = -1

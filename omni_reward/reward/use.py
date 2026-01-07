@@ -8,6 +8,10 @@ from typing import Any, Dict
 import numpy as np
 from PIL import Image
 
+"""
+Convenience function to create an OmniRewardInterface with VLM captioning and text encoding.
+# this is a helper function to instantiate the OmniRewardInterface with common components.
+"""
 def omni_reward_interface(
     *,
     goal: str,
