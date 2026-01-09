@@ -11,20 +11,20 @@ class OmniRewardWrapper(gym.Wrapper):
         self.use_subgoals = use_subgoals
         
     def reset(self, **kwargs):
-        obs = self.env.reset(**kwargs)
+        obs, info = self.env.reset(**kwargs)
         
         if self.use_subgoals:
             # Start the episode using decomposed subgoals
             self.reward_interface.start_episode_with_subgoals(
                 self.goal_text, 
-                initial_image=obs,
+                initial_image=info["image"],
                 auto_decompose=True
             )
         else:
             # Start the episode with a single final goal
-            self.reward_interface.start_episode(self.goal_text, initial_image=obs)
+            self.reward_interface.start_episode(self.goal_text, initial_image=info["image"])
         
-        return obs
+        return obs, info
     
     def step(self, action):
         obs, _, done, info = self.env.step(action)
