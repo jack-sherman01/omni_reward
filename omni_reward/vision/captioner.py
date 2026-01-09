@@ -34,7 +34,7 @@ class VLMCaptioner:
     def set_goal_context(self, goal_text: Optional[str]) -> None:
         self.goal_context = goal_text
 
-    def enrich_state(self, state_description: Optional[str], baseline_image: Optional[Any] = None) -> Optional[str]:
+    def enrich_state(self, state_description: Optional[str], initial_image: Optional[Any] = None) -> Optional[str]:
         """Hook for state description enrichment for accelerating the learning. so that it is more informative for embedding and similarity comparison.
         This function uses the VLM itself to generate additional context about the state."""
         
@@ -43,17 +43,17 @@ class VLMCaptioner:
             
         # Define questions to extract rich information about the state
         enrichment_questions = [
-            f"What are the key visual elements or objects present in the state: '{state_description} and {baseline_image}'?",
-            f"Are there any notable spatial relationships or arrangements of objects in the state: '{state_description} and {baseline_image}'?",
-            f"what is the current state of robot and environment in the state: '{state_description} and {baseline_image}'?, like positions, orientations, and interactions. or interactions between robot and objects.",
-            f"Are there any potential obstacles or challenges visible in the state: '{state_description} and {baseline_image}'?",
+            f"What are the key visual elements or objects present in the state: '{state_description} and {initial_image}'?",
+            f"Are there any notable spatial relationships or arrangements of objects in the state: '{state_description} and {initial_image}'?",
+            f"what is the current state of robot and environment in the state: '{state_description} and {initial_image}'?, like positions, orientations, and interactions. or interactions between robot and objects.",
+            f"Are there any potential obstacles or challenges visible in the state: '{state_description} and {initial_image}'?",
         ]   
         # Collect enriched information from VLM
         enriched_parts = [f"Original State: {state_description}"]
         for question in enrichment_questions:
             try:
                 # Use VLM to answer each question
-                response = self.vlm.generate_caption(baseline_image, template=question)
+                response = self.vlm.generate_caption(initial_image, template=question)
                 if response and response.strip():
                     enriched_parts.append(response.strip())
             except Exception as e:
