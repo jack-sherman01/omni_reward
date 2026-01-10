@@ -32,7 +32,7 @@ class OmniRewardWrapper(gym.Wrapper):
         if self.use_subgoals:
             # Compute reward using subgoal-based progression
             result = self.reward_interface.compute_reward_with_subgoals(
-                scene_image=obs,
+                scene_image=obs, #TODO: check if obs contains image or need to extract
                 auto_advance=True,
                 completion_bonus=10.0  # Extra reward for completing a subgoal
             )
