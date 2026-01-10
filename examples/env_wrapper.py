@@ -27,8 +27,9 @@ class OmniRewardWrapper(gym.Wrapper):
         return obs, info
     
     def step(self, action):
-        obs, _, done, info = self.env.step(action)
-        
+        # obs, _, done, info = self.env.step(action) # NOTE:old version < gym 0.26 does not return info
+        obs, _, terminated, truncated, info = self.env.step(action) # gym 0.26+
+        done = terminated or truncated
         if self.use_subgoals:
             # Compute reward using subgoal-based progression
             result = self.reward_interface.compute_reward_with_subgoals(
