@@ -308,7 +308,7 @@ class OmniRewardInterface:
         self.timestep = 0
         # TODO: record initial step with zero reward is right? reward at initial step could be negtive.
         # TODO: I think here we can just record the caption insteasd of rich_caption
-        self._record_step(timestep=0, caption=caption, potential=potential, reward=0.0)
+        self._record_step(timestep=0, image_caption=caption, potential=potential, reward=0.0)
 
     def _record_step(self, *, timestep: int, image_caption: str, potential: float, reward: float) -> None:
         """ Save to history for logging purposes """ 
