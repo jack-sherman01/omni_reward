@@ -23,7 +23,10 @@ class OmniRewardWrapper:
         image_save_dir: str | None = None,
         task_name: str = "default_task",
         # Camera settings
-        camera_name: str = "corner2",  # Options: "corner", "corner2", "corner3", "behindGripper", "topview"
+        camera_name: str = "corner2",
+        # VLM call frequency settings
+        vlm_call_interval: int = 10,  # Call VLM every N steps
+        use_interpolated_reward: bool = True,  # Interpolate reward between VLM calls
     ):
         # Set API key
         if openai_api_key:
@@ -40,6 +43,13 @@ class OmniRewardWrapper:
         self.use_subgoals = use_subgoals
         self.task_name = task_name
         self.camera_name = camera_name
+        
+        # VLM call frequency settings
+        self.vlm_call_interval = vlm_call_interval
+        self.use_interpolated_reward = use_interpolated_reward
+        self._last_vlm_reward = 0.0
+        self._last_vlm_result = None
+        self._steps_since_vlm_call = 0
         
         # Image saving settings - automatically include task name
         self.save_images = save_images
@@ -160,11 +170,38 @@ class OmniRewardWrapper:
         filepath = os.path.join(self.image_save_dir, filename)
         img = Image.fromarray(image)
         img.save(filepath)
+    
+    def _should_call_vlm(self) -> bool:
+        """Determine if VLM should be called this step"""
+        return self._steps_since_vlm_call >= self.vlm_call_interval
+    
+    def _compute_interpolated_reward(self) -> float:
+        """Compute interpolated reward between VLM calls
+        
+        Uses the last VLM reward, optionally with decay or other strategies.
+        """
+        if self.use_interpolated_reward:
+            # Strategy 1: Use last reward (simple)
+            return self._last_vlm_reward
+            
+            # Strategy 2: Decay reward over time (alternative)
+            # decay_factor = 0.95 ** self._steps_since_vlm_call
+            # return self._last_vlm_reward * decay_factor
+            
+            # Strategy 3: Use zero between calls (sparse)
+            # return 0.0
+        else:
+            return 0.0
         
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         self._timestep = 0
         self._episode += 1
+        
+        # Reset VLM call tracking
+        self._steps_since_vlm_call = self.vlm_call_interval  # Force VLM call on first step
+        self._last_vlm_reward = 0.0
+        self._last_vlm_result = None
         
         # Reset the reward interface state
         self.reward_interface.reset_episode()
@@ -190,6 +227,7 @@ class OmniRewardWrapper:
     def step(self, action):
         obs, _, terminated, truncated, info = self.env.step(action)
         self._timestep += 1
+        self._steps_since_vlm_call += 1
         
         # Get the current image (using the specified camera)
         current_image = self._get_image(camera_name=self.camera_name)
@@ -198,18 +236,38 @@ class OmniRewardWrapper:
         if self.save_images and current_image is not None:
             self._save_image(current_image, step=self._timestep)
         
-        if self.use_subgoals:
-            result = self.reward_interface.compute_reward_with_subgoals(
-                scene_image=current_image,
-                auto_advance=True,
-                completion_bonus=10.0
-            )
-            reward = result['reward']
-            info['omni_reward_info'] = result
+        # Determine if we should call VLM this step
+        if self._should_call_vlm():
+            # Call VLM to compute reward
+            if self.use_subgoals:
+                result = self.reward_interface.compute_reward_with_subgoals(
+                    scene_image=current_image,
+                    auto_advance=True,
+                    completion_bonus=10.0
+                )
+                reward = result['reward']
+                info['omni_reward_info'] = result
+                
+                # Cache the result
+                self._last_vlm_reward = reward
+                self._last_vlm_result = result
+                self._steps_since_vlm_call = 0
+                
+                if result.get('all_completed', False):
+                    terminated = True
+            else:
+                reward = self.reward_interface.compute_reward(current_image)
+                self._last_vlm_reward = reward
+                self._steps_since_vlm_call = 0
             
-            if result.get('all_completed', False):
-                terminated = True
+            info['vlm_called'] = True
         else:
-            reward = self.reward_interface.compute_reward(current_image)
+            # Use interpolated/cached reward
+            reward = self._compute_interpolated_reward()
+            info['vlm_called'] = False
+            
+            # Still include last VLM result info if available
+            if self._last_vlm_result is not None:
+                info['omni_reward_info'] = self._last_vlm_result
             
         return obs, reward, terminated, truncated, info
