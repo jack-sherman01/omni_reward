@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 
 import numpy as np
+import numpy.typing as npt
 
 from omni_reward.reward.multimodal import UnifiedMultimodalPotential
 from omni_reward.vision.captioner import VLMCaptioner
@@ -53,25 +54,44 @@ class OmniRewardInterface:
     Internally, the first generated caption becomes the baseline description and the reward is the difference between consecutive potentials.
     """
 
-    def __init__(
-        self,
-        captioner: Captioner,
-        text_encoder: TextEncoder,
-        *,
-        alpha: float = 0.6,
-        lambda_: float = 1.0,
-        store_history: bool = True,
-    ) -> None:
+    def __init__(self, captioner, text_encoder, allow_goal_change: bool = False):
+        """
+        Initialize the OmniReward interface.
+        
+        Args:
+            captioner: Vision-language model for generating captions
+            text_encoder: Model for encoding text to embeddings
+            allow_goal_change: If True, allows goal text to change during episode (for subgoals)
+        """
         self.captioner = captioner
         self.text_encoder = text_encoder
-        self.alpha = alpha
-        self.lambda_ = lambda_
-        self.store_history = store_history
+        self.allow_goal_change = allow_goal_change
         
-        # Add subgoal-related attributes
-        self.subgoals = []
-        self.current_subgoal_idx = 0
+        # Episode state
+        self._current_goal = None
+        self._initial_image = None
+        self._subgoals = None
+        self._current_subgoal_index = 0
         self.subgoal_completion_threshold = 0.8  # Configurable threshold for subgoal completion
+        
+        # Reward computation parameters
+        self.alpha = 0.5  # Weight for potential computation
+        self.lambda_ = 0.9  # Discount factor for potential computation
+        
+        # History tracking
+        self.store_history = True  # Whether to store history
+        self._history = []
+        
+        # Potential and baseline
+        self._potential = None
+        self.goal_text = None
+        self.baseline_caption = None
+        self.prev_potential = None
+        self.timestep = -1
+        
+        # Subgoals tracking
+        self.subgoals = None
+        self.current_subgoal_idx = 0
         
         self.reset_episode()
 
@@ -135,23 +155,17 @@ class OmniRewardInterface:
     def start_episode_with_subgoals(
         self,
         goal_text: str,
-        initial_image: Optional[Any] = None,
-        baseline_caption: Optional[str] = None,
-        auto_decompose: bool = True,
-    ) -> None:
-        """Start an episode with automatic goal decomposition.
-        
-        Parameters
-        ----------
-        goal_text:
-            The final goal to achieve.
-        initial_image:
-            Optional first observation.
-        baseline_caption:
-            Optional baseline caption.
-        auto_decompose:
-            Whether to automatically decompose the goal into subgoals.
+        initial_image: npt.NDArray[np.uint8] | None = None,
+        subgoals: list[str] | None = None,
+        auto_decompose: bool = True
+    ) -> dict:
         """
+        Start a new episode with subgoal decomposition.
+        Automatically enables goal change for subgoal mode.
+        """
+        # subgoal mode requires allowing goal changes
+        self.allow_goal_change = True
+        
         if auto_decompose:
             self.subgoals = decompose_goal_to_subgoals(goal_text)
         else:
@@ -161,7 +175,16 @@ class OmniRewardInterface:
         
         # Start with the first subgoal
         current_goal = self.subgoals[0] if self.subgoals else goal_text
-        self.start_episode(current_goal, initial_image, baseline_caption)
+        self.start_episode(current_goal, initial_image)
+
+        result = {
+            'subgoals': self.subgoals,
+            'current_subgoal': self.subgoals[self.current_subgoal_idx] if self.subgoals else None,
+            'all_subgoals': self.subgoals,
+            'goal_text': goal_text,
+        }
+        
+        return result
 
     def check_subgoal_completion(self, current_potential: float) -> bool:
         """Check if current subgoal is completed based on potential.
@@ -318,16 +341,22 @@ class OmniRewardInterface:
             RewardStep(timestep=timestep, image_caption=image_caption, potential=potential, reward=reward)
         )
 
-    def _resolve_goal(self, goal_text: Optional[str]) -> str:
+    def _resolve_goal(self, goal_text: str | None = None) -> str:
+        """
+        Resolve goal text: use provided goal_text if given, 
+        otherwise use the current episode's goal.
+        """
         if goal_text is not None:
-            if self.goal_text is not None and goal_text != self.goal_text:
-                raise ValueError("Goal text changed during an episode. Call reset_episode() before switching goals.")
-            self.goal_text = goal_text
-
-        if self.goal_text is None:
-            raise ValueError("Goal text must be provided before computing rewards.")
-
-        return self.goal_text
+            if self._current_goal is not None and goal_text != self._current_goal:
+                if not self.allow_goal_change:
+                    raise ValueError("Goal text changed during an episode. Call reset_episode() before switching goals.")
+            self._current_goal = goal_text
+            return goal_text
+        
+        if self._current_goal is None:
+            raise ValueError("No goal text available. Call start_episode() first.")
+        
+        return self._current_goal
 
     def _resolve_timestep(self, supplied_timestep: Optional[int], incoming_goal: Optional[str]) -> int:
         if supplied_timestep is None:
