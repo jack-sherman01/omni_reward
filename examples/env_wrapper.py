@@ -1,3 +1,7 @@
+'''
+this is Environment wrapper that replaces rewards with OmniReward
+connect OmniReward with your task environment
+'''
 # import gym
 import os
 import numpy as np
