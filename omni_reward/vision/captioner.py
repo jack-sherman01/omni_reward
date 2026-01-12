@@ -14,24 +14,62 @@ class VLMCaptioner:
     def __init__(
         self,
         vlm_type: str = "openai",
-        caption_template: str = "structured_v1",
+        caption_template: str = "detailed_state",  # Changed default to detailed_state
         goal_context: Optional[str] = None,
         vlm: Optional[VLMBase] = None,
+        max_caption_tokens: int = 1024,  # New parameter for longer captions
         **vlm_kwargs,
     ):
         self.vlm_type = vlm_type
         self.caption_template = caption_template
         self.goal_context = goal_context
         self.vlm = vlm or get_vlm(vlm_type, **vlm_kwargs)
+        self.max_caption_tokens = max_caption_tokens
 
         # In-memory cache for expensive goal enrichment results
         self._enrichment_cache = {}
 
-    def caption(self, image: Any, goal_text: Optional[str] = None) -> str:
+    def caption(
+        self, 
+        image: Any, 
+        goal_text: Optional[str] = None,
+        template: Optional[str] = None,
+        detailed: bool = True,  # New flag for detailed captions
+    ) -> str:
+        """Generate a caption for an image.
+        
+        Args:
+            image: Image to caption
+            goal_text: Optional goal context
+            template: Override template (uses self.caption_template if None)
+            detailed: If True, use detailed template; if False, use simple template
+        """
         goal = goal_text or self.goal_context
-        caption_text = self.vlm.generate_caption(image, template=self.caption_template, goal=goal)
-        print("[VLMCaptioner] caption:", caption_text)
+        
+        # Select template based on detailed flag
+        if template is not None:
+            use_template = template
+        elif detailed:
+            use_template = "detailed_state" if goal is None else "goal_oriented"
+        else:
+            use_template = self.caption_template
+        
+        caption_text = self.vlm.generate_caption(
+            image, 
+            template=use_template, 
+            goal=goal,
+            max_tokens=self.max_caption_tokens,
+        )
+        print(f"[VLMCaptioner] caption ({use_template}):\n{caption_text}")
         return caption_text
+
+    def caption_detailed(self, image: Any, goal_text: Optional[str] = None) -> str:
+        """Generate an extremely detailed caption for state representation."""
+        return self.caption(image, goal_text=goal_text, template="detailed_state", detailed=True)
+    
+    def caption_for_goal(self, image: Any, goal_text: str) -> str:
+        """Generate a goal-oriented caption focusing on progress toward the goal."""
+        return self.caption(image, goal_text=goal_text, template="goal_oriented", detailed=True)
 
     def caption_multi(self, image: Any, n: int = 1, goal_text: Optional[str] = None):
         return [self.caption(image, goal_text=goal_text) for _ in range(n)]

@@ -157,7 +157,7 @@ except ImportError:
 
 # Import base class and local VLMs for factory registration
 from .VLM_local import VLMBase, CLIPLocalVLM, LocalLLaVAVLM
-from .templates import get_caption_template
+from omni_reward.VLM_utils.templates import get_template, CAPTION_TEMPLATES
 
 
 class APIVLMBase(VLMBase):
@@ -211,7 +211,7 @@ class APIVLMBase(VLMBase):
             }
 
     def _get_caption_prompt(self, template: str, goal: Optional[str] = None) -> str:
-        return get_caption_template(template, goal)
+        return get_template(template, goal)
 
     def _get_progress_prompt(self, task_description: str) -> str:
         """Generate standard prompt for task progress evaluation"""
@@ -310,33 +310,32 @@ class OpenAIVLM(APIVLMBase):
         }
 
     def generate_caption(
-        self,
-        image: Union[np.ndarray, "Image.Image"],
-        template: str = "structured_v1",
+        self, 
+        image: Any, 
+        template: str = "detailed_state",  # Changed default to detailed_state
         goal: Optional[str] = None,
+        max_tokens: int = 1024,  # Increased for longer responses
     ) -> str:
-        base64_image = self._image_to_base64(image)
-        prompt = self._get_caption_prompt(template, goal)
-
-        response = self.client.chat.completions.create(
-            model=self.vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
-                    ],
-                }
-            ],
-            max_tokens=400,
-        )
-
-        parsed = self._parse_json_response(response.choices[0].message.content)
-        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
-        if not caption:
-            raise RuntimeError("OpenAI caption produced no text")
-        return str(caption).strip()
+        """Generate a detailed caption for an image.
+        
+        Args:
+            image: Image to caption (numpy array, PIL Image, or path)
+            template: Template name or custom prompt string
+            goal: Optional goal context to include
+            max_tokens: Maximum tokens in response (default 1024 for detailed output)
+        """
+        # Get template from predefined templates or use as custom prompt
+        if template in CAPTION_TEMPLATES:
+            prompt = get_template(template, goal=goal)
+        else:
+            # Use template as custom prompt directly
+            prompt = template
+            if goal:
+                prompt = f"{prompt}\n\nGoal context: {goal}"
+        
+        # Generate caption with increased max_tokens
+        response = self._call_vlm(image, prompt, max_tokens=max_tokens)
+        return response
 
 
 class GeminiVLM(APIVLMBase):
