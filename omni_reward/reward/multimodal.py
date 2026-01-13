@@ -25,17 +25,35 @@ class UnifiedMultimodalPotential:
         self.tactile_captioner = None
 
     def _vision_potential(self, caption: str, alpha: float) -> float:
-        captions: Sequence[str] = [caption]
+        """Compute the vision-based potential function.
 
-        embeddings = self.encoder.encode_many(captions)
-        vals = []
-        for caption_emb in embeddings:
-            p_goal = cosine_sim(caption_emb, self.goal_emb)
-            p_base = -cosine_sim(caption_emb, self.base_emb)
-            # Φ_V = α cos(eC, e_goal) + (1 - α)(-cos(eC, e_base))
-            vals.append(alpha * p_goal + (1 - alpha) * p_base)
+        The vision potential combines goal-seeking and baseline-avoiding behaviors:
 
-        return float(np.mean(vals))
+            Φ_V(s, α) = α · sim(e_s, e_goal) - (1 - α) · sim(e_s, e_base)
+
+        where:
+            - e_s: embedding of the current state caption
+            - e_goal: embedding of the goal description
+            - e_base: embedding of the baseline description
+            - sim(·, ·): cosine similarity between two embeddings
+            - α ∈ [0, 1]: weighting factor that balances goal attraction vs baseline repulsion
+
+        When α = 1: pure goal-seeking (maximize similarity to goal)
+        When α = 0: pure baseline-avoiding (minimize similarity to baseline)
+        When 0 < α < 1: combined behavior encouraging progress toward goal while leaving baseline
+
+        Args:
+            caption: Text description of the current visual state.
+            alpha: Weighting factor between goal similarity and baseline dissimilarity.
+
+        Returns:
+            The scalar potential value for the current state.
+        """
+        caption_emb = self.encoder.encode_one(caption)
+        p_goal = cosine_sim(caption_emb, self.goal_emb)
+        p_base = -cosine_sim(caption_emb, self.base_emb)
+        
+        return alpha * p_goal + (1 - alpha) * p_base
 
     def _tactile_potential(self, tactile_vec: Optional[np.ndarray]) -> float:
         if tactile_vec is None or self.tactile_goal_emb is None:
@@ -46,5 +64,6 @@ class UnifiedMultimodalPotential:
 
     def compute(self, image_caption: str, alpha: float, lambda_: float) -> float:
         phi_v = self._vision_potential(image_caption, alpha)
-        phi_t = self._tactile_potential(None)
-        return lambda_ * phi_v + (1 - lambda_) * phi_t
+        #TODO: enable tactile potential when available and add force potential as well
+        # phi_t = self._tactile_potential(None)
+        return lambda_ * phi_v + (1 - lambda_) #* phi_t
