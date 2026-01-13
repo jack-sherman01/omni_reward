@@ -403,13 +403,15 @@ class OmniRewardInterface:
 
         timestep = self._resolve_timestep(timestep, goal_text)
         resolved_goal = self._resolve_goal(goal_text)
-
+        # TODO: can be optimized to avoid double captioning when priming baseline
         image_caption = self.captioner.caption(scene_image, goal_text=resolved_goal)
         self._prime_baseline(image_caption)
 
         potential = self._compute_potential(image_caption)
         prev_potential = self.prev_potential
-        reward = 0.0 if prev_potential is None else potential - prev_potential
+        # NOTE: only use potential as reward for test now, need to add difference as a reward term later.
+        # reward = 0.0 if prev_potential is None else potential - prev_potential
+        reward = potential # use potential as reward for test
 
         self.prev_potential = potential
         self.timestep = timestep
