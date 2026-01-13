@@ -416,7 +416,83 @@ class OmniRewardInterface:
         self.prev_potential = potential
         self.timestep = timestep
         self._record_step(timestep=timestep, image_caption=image_caption, potential=potential, reward=reward)
-        return reward
+        
+        # Compute completion sense reward
+        # R_completion = r_base + β · sigmoid(k · (Φ - τ)) · (1 + Δ_progress)
+        # where:
+        #   - r_base: base potential reward
+        #   - Φ: current potential (similarity to goal)
+        #   - τ: completion threshold
+        #   - k: sigmoid steepness factor
+        #   - Δ_progress: improvement from previous step
+        #   - β: completion bonus weight
+        completion_sense_reward = self._compute_completion_sense_reward(
+            base_reward=reward,
+            current_potential=potential,
+            prev_potential=prev_potential,
+        )
+        
+        return completion_sense_reward
+
+    def _compute_completion_sense_reward(
+        self,
+        base_reward: float,
+        current_potential: float,
+        prev_potential: Optional[float],
+        completion_threshold: float = 0.7,
+        sigmoid_steepness: float = 10.0,
+        completion_bonus_weight: float = 0.5,
+    ) -> float:
+        """Compute completion-aware reward with smooth transition near goal.
+
+        The completion sense reward combines base reward with a sigmoid-based
+        completion bonus that activates as the agent approaches the goal:
+
+            R_completion = r_base + β · σ(k · (Φ - τ)) · (1 + max(0, ΔΦ))
+
+        where:
+            - r_base: base potential reward from current state
+            - Φ: current potential (normalized similarity to goal, in [-1, 1])
+            - τ: completion threshold (typically 0.7-0.9)
+            - k: sigmoid steepness factor (controls sharpness of transition)
+            - σ(x) = 1 / (1 + exp(-x)): sigmoid function for smooth activation
+            - ΔΦ = Φ_t - Φ_{t-1}: progress from previous step
+            - β: completion bonus weight
+
+        This formulation provides: 
+            1. Smooth reward increase as agent approaches completion
+            2. Extra bonus for continued progress near the goal
+            3. No discontinuous jumps at threshold boundaries
+
+        Args:
+            base_reward: The base potential reward.
+            current_potential: Current state's potential value Φ(s).
+            prev_potential: Previous state's potential value Φ(s').
+            completion_threshold: Threshold τ where completion bonus activates.
+            sigmoid_steepness: Steepness k of sigmoid transition.
+            completion_bonus_weight: Weight β for completion bonus.
+
+        Returns:
+            The completion-aware shaped reward.
+        """
+        # Sigmoid activation: σ(k · (Φ - τ))
+        # Maps potential to [0, 1] with smooth transition around threshold
+        sigmoid_input = sigmoid_steepness * (current_potential - completion_threshold)
+        completion_activation = 1.0 / (1.0 + np.exp(-sigmoid_input))
+        
+        # Progress term: ΔΦ = Φ_t - Φ_{t-1}
+        # Rewards continued improvement, especially near goal
+        progress = 0.0
+        if prev_potential is not None:
+            progress = max(0.0, current_potential - prev_potential)
+        
+        # Completion bonus: β · σ(k · (Φ - τ)) · (1 + ΔΦ)
+        completion_bonus = completion_bonus_weight * completion_activation * (1.0 + progress)
+        
+        # Final reward: r_base + completion_bonus
+        completion_sense_reward = base_reward + completion_bonus
+        
+        return completion_sense_reward
 
     def get_current_reward(self, scene_image: Any, goal_text: Optional[str] = None) -> float:
         """Streaming-friendly alias that only requires the latest image.
