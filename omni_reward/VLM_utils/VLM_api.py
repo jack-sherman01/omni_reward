@@ -333,9 +333,25 @@ class OpenAIVLM(APIVLMBase):
             if goal:
                 prompt = f"{prompt}\n\nGoal context: {goal}"
         
-        # Generate caption with increased max_tokens
-        response = self._call_vlm(image, prompt, max_tokens=max_tokens)
-        return response
+        # Convert image to base64
+        base64_image = self._image_to_base64(image)
+        
+        # Call OpenAI API
+        response = self.client.chat.completions.create(
+            model=self.vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
+                    ],
+                }
+            ],
+            max_tokens=max_tokens,
+        )
+        
+        return response.choices[0].message.content.strip()
 
 
 class GeminiVLM(APIVLMBase):
