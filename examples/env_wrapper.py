@@ -4,10 +4,63 @@ connect OmniReward with your task environment
 '''
 # import gym
 import os
+import sys
+import logging
+from datetime import datetime
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
 from omni_reward.reward.interface import OmniRewardInterface
+
+
+def setup_logger(task_name: str, log_dir: str = "./logs") -> logging.Logger:
+    """Setup logger that writes to both console and file.
+    
+    Args:
+        task_name: Name of the task for log file naming
+        log_dir: Directory to save log files
+        
+    Returns:
+        Configured logger instance
+    """
+    # Create log directory if it doesn't exist
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Generate timestamp for unique log file name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"{task_name}_{timestamp}.log"
+    log_filepath = os.path.join(log_dir, log_filename)
+    
+    # Create logger
+    logger = logging.getLogger(f"OmniReward_{task_name}_{timestamp}")
+    logger.setLevel(logging.DEBUG)
+    
+    # Prevent duplicate handlers
+    if logger.handlers:
+        return logger
+    
+    # File handler - writes to file
+    file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_format = logging.Formatter(
+        '%(asctime)s | %(levelname)-8s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(file_format)
+    
+    # Console handler - prints to console
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_format = logging.Formatter('%(message)s')
+    console_handler.setFormatter(console_format)
+    
+    # Add handlers to logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    logger.info(f"Log file created: {log_filepath}")
+    
+    return logger
 
 
 class OmniRewardWrapper:
@@ -31,6 +84,9 @@ class OmniRewardWrapper:
         # VLM call frequency settings
         vlm_call_interval: int = 10,  # Call VLM every N steps
         use_interpolated_reward: bool = True,  # Interpolate reward between VLM calls
+        # Logging settings
+        save_logs: bool = True,
+        log_dir: str = "./logs",
     ):
         # Set API key
         if openai_api_key:
@@ -61,8 +117,38 @@ class OmniRewardWrapper:
         if self.save_images:
             os.makedirs(self.image_save_dir, exist_ok=True)
         
+        # Logging settings
+        self.save_logs = save_logs
+        self.log_dir = log_dir
+        if self.save_logs:
+            self.logger = setup_logger(task_name, log_dir)
+            self._log_init_info()
+        else:
+            self.logger = None
+        
         self._timestep = 0
         self._episode = 0
+    
+    def _log_init_info(self):
+        """Log initialization information"""
+        self.logger.info("=" * 80)
+        self.logger.info("OmniRewardWrapper Initialized")
+        self.logger.info("=" * 80)
+        self.logger.info(f"Task Name: {self.task_name}")
+        self.logger.info(f"Goal Text: {self.goal_text}")
+        self.logger.info(f"Use Subgoals: {self.use_subgoals}")
+        self.logger.info(f"Camera: {self.camera_name}")
+        self.logger.info(f"VLM Call Interval: {self.vlm_call_interval}")
+        self.logger.info(f"Image Save Dir: {self.image_save_dir}")
+        self.logger.info("=" * 80)
+    
+    def _log(self, message: str, level: str = "info"):
+        """Log a message if logging is enabled"""
+        if self.logger:
+            log_func = getattr(self.logger, level.lower(), self.logger.info)
+            log_func(message)
+        else:
+            print(message)
     
     @property
     def action_space(self):
@@ -120,7 +206,7 @@ class OmniRewardWrapper:
                     try:
                         renderer.update_scene(data, camera=cam)
                     except Exception as e:
-                        print(f"Camera {cam} not found, using default: {e}")
+                        self._log(f"Camera {cam} not found, using default: {e}", "warning")
                         renderer.update_scene(data)
                 
                 img = renderer.render()
@@ -130,7 +216,7 @@ class OmniRewardWrapper:
                 img = img[::-1]
                 return img
             except Exception as e:
-                print(f"mujoco_renderer failed for camera {cam}: {e}")
+                self._log(f"mujoco_renderer failed for camera {cam}: {e}", "error")
         
         if hasattr(self.env, 'sim'):
             # Older MetaWorld uses sim (mujoco_py)
@@ -139,7 +225,7 @@ class OmniRewardWrapper:
                 height = self.env.height if hasattr(self.env, 'height') else 480
                 
                 if cam == "frontview":
-                    print("Warning: frontview not supported with mujoco_py, using corner")
+                    self._log("Warning: frontview not supported with mujoco_py, using corner", "warning")
                     cam = "corner"
                 
                 img = self.env.sim.render(
@@ -151,10 +237,10 @@ class OmniRewardWrapper:
                 # mujoco_py also renders images upside down
                 return img[::-1]
             except Exception as e:
-                print(f"sim.render failed for camera {cam}: {e}")
+                self._log(f"sim.render failed for camera {cam}: {e}", "error")
         
         # Finally, try calling env.render()
-        print(f"Warning: Using default render(), camera '{cam}' may not be applied")
+        self._log(f"Warning: Using default render(), camera '{cam}' may not be applied", "warning")
         return self.env.render()
     
     def _get_multi_view_images(self) -> dict:
@@ -165,7 +251,7 @@ class OmniRewardWrapper:
             try:
                 images[cam] = self._get_image(camera_name=cam)
             except Exception as e:
-                print(f"Failed to render camera {cam}: {e}")
+                self._log(f"Failed to render camera {cam}: {e}", "error")
         return images
     
     def _save_image(self, image: npt.NDArray[np.uint8], step: int) -> None:
@@ -202,14 +288,17 @@ class OmniRewardWrapper:
         self._timestep = 0
         self._episode += 1
         
+        self._log(f"\n{'='*80}")
+        self._log(f"Episode {self._episode} Started")
+        self._log(f"{'='*80}")
+        
         # Reset VLM call tracking
         self._steps_since_vlm_call = self.vlm_call_interval  # Force VLM call on first step
         self._last_vlm_reward = 0.0
         self._last_vlm_result = None
         
-        # Reset the reward interface state
-        self.reward_interface.reset_episode()
-        
+        # NOTE: Do not call reset_episode() here, as start_episode_with_subgoals will handle it.
+    
         # Get the initial image (using the specified camera)
         initial_image = self._get_image(camera_name=self.camera_name)
         
@@ -218,13 +307,22 @@ class OmniRewardWrapper:
             self._save_image(initial_image, step=0)
         
         if self.use_subgoals:
+            # start_episode_with_subgoals will set goal_text and subgoals
             self.reward_interface.start_episode_with_subgoals(
                 self.goal_text, 
                 initial_image=initial_image,
                 auto_decompose=True
             )
+            # Log subgoals
+            if hasattr(self.reward_interface, 'subgoals') and self.reward_interface.subgoals:
+                self._log(f"Subgoals ({len(self.reward_interface.subgoals)}):")
+                for i, sg in enumerate(self.reward_interface.subgoals):
+                    self._log(f"  {i+1}. {sg}")
         else:
+            # start_episode will set goal_text
             self.reward_interface.start_episode(self.goal_text, initial_image=initial_image)
+        
+        self._log(f"Initial observation shape: {obs.shape}")
         
         return obs, info
     
@@ -241,7 +339,9 @@ class OmniRewardWrapper:
             self._save_image(current_image, step=self._timestep)
         
         # Determine if we should call VLM this step
+        vlm_called = False
         if self._should_call_vlm():
+            vlm_called = True
             # Call VLM to compute reward
             if self.use_subgoals:
                 result = self.reward_interface.compute_reward_with_subgoals(
@@ -257,12 +357,24 @@ class OmniRewardWrapper:
                 self._last_vlm_result = result
                 self._steps_since_vlm_call = 0
                 
+                # Log VLM call result
+                self._log(f"\n--- Step {self._timestep} (VLM Called) ---")
+                self._log(f"Reward: {reward:.4f}")
+                self._log(f"Current Subgoal Index: {result.get('current_subgoal_index', 'N/A')}")
+                self._log(f"Current Subgoal: {result.get('current_subgoal', 'N/A')}")
+                self._log(f"Subgoal Completed: {result.get('subgoal_completed', False)}")
+                self._log(f"All Completed: {result.get('all_completed', False)}")
+                
                 if result.get('all_completed', False):
+                    self._log("🎉 All subgoals completed!")
                     terminated = True
             else:
                 reward = self.reward_interface.compute_reward(current_image)
                 self._last_vlm_reward = reward
                 self._steps_since_vlm_call = 0
+                
+                self._log(f"\n--- Step {self._timestep} (VLM Called) ---")
+                self._log(f"Reward: {reward:.4f}")
             
             info['vlm_called'] = True
         else:
@@ -274,4 +386,22 @@ class OmniRewardWrapper:
             if self._last_vlm_result is not None:
                 info['omni_reward_info'] = self._last_vlm_result
             
+            # Log interpolated step (debug level, only to file)
+            self.logger.debug(f"Step {self._timestep}: Interpolated reward = {reward:.4f}")
+            
         return obs, reward, terminated, truncated, info
+    
+    def close(self):
+        """Close the environment and finalize logging"""
+        if self.logger:
+            self._log(f"\n{'='*80}")
+            self._log(f"Environment Closed")
+            self._log(f"Total Episodes: {self._episode}")
+            self._log(f"{'='*80}")
+            
+            # Close all handlers
+            for handler in self.logger.handlers[:]:
+                handler.close()
+                self.logger.removeHandler(handler)
+        
+        self.env.close()
