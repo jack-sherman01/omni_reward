@@ -126,6 +126,10 @@ class LLMClient:
 # Default LLM client instance (lazily initialized)
 _default_client: Optional[LLMClient] = None
 
+# Default model configuration (can be overridden via environment variables)
+DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+DEFAULT_ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
+
 
 def get_llm_client(
     provider: str = "openai",
@@ -139,7 +143,7 @@ def get_llm_client(
     provider:
         LLM provider to use.
     model:
-        Model name to use.
+        Model name to use. If None, uses default from environment or fallback.
     **kwargs:
         Additional arguments passed to LLMClient.
         
@@ -148,6 +152,14 @@ def get_llm_client(
     LLMClient instance.
     """
     global _default_client
+    
+    # Use environment-based defaults if model not specified
+    if model is None:
+        if provider.lower() == "openai":
+            model = DEFAULT_OPENAI_MODEL
+        elif provider.lower() == "anthropic":
+            model = DEFAULT_ANTHROPIC_MODEL
+    
     if _default_client is None or _default_client.provider != provider:
         _default_client = LLMClient(provider=provider, model=model, **kwargs)
     return _default_client
