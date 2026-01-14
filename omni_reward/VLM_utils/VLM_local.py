@@ -77,7 +77,7 @@ except ImportError:
     CLIPModel = None
     CLIPProcessor = None
 
-from omni_reward.VLM_utils.templates import get_caption_template
+from omni_reward.VLM_utils.templates import get_template
 
 
 class VLMBase(abc.ABC):
@@ -360,7 +360,7 @@ Format: Progress: X.X | Explanation: ...
         goal: Optional[str] = None,
     ) -> str:
         pil_image = self._to_pil_image(image)
-        prompt = get_caption_template(template, goal)
+        prompt = get_template(template, goal)
         formatted_prompt = f"<image>\n{prompt}\n"
 
         inputs = self.processor(text=formatted_prompt, images=pil_image, return_tensors="pt")
