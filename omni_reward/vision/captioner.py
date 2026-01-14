@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Any, List, Optional
+import hashlib
+import json
 
 from omni_reward.VLM_utils.VLM_api import get_vlm
 from omni_reward.VLM_utils.VLM_local import VLMBase
@@ -12,21 +14,62 @@ class VLMCaptioner:
     def __init__(
         self,
         vlm_type: str = "openai",
-        caption_template: str = "structured_v1",
+        caption_template: str = "detailed_state",  # Changed default to detailed_state
         goal_context: Optional[str] = None,
         vlm: Optional[VLMBase] = None,
+        max_caption_tokens: int = 1024,  # New parameter for longer captions
         **vlm_kwargs,
     ):
         self.vlm_type = vlm_type
         self.caption_template = caption_template
         self.goal_context = goal_context
         self.vlm = vlm or get_vlm(vlm_type, **vlm_kwargs)
+        self.max_caption_tokens = max_caption_tokens
 
-    def caption(self, image: Any, goal_text: Optional[str] = None) -> str:
+        # In-memory cache for expensive goal enrichment results
+        self._enrichment_cache = {}
+
+    def caption(
+        self, 
+        image: Any, 
+        goal_text: Optional[str] = None,
+        template: Optional[str] = None,
+        detailed: bool = True,  # New flag for detailed captions
+    ) -> str:
+        """Generate a caption for an image.
+        
+        Args:
+            image: Image to caption
+            goal_text: Optional goal context
+            template: Override template (uses self.caption_template if None)
+            detailed: If True, use detailed template; if False, use simple template
+        """
         goal = goal_text or self.goal_context
-        caption_text = self.vlm.generate_caption(image, template=self.caption_template, goal=goal)
-        print("[VLMCaptioner] caption:", caption_text)
+        
+        # Select template based on detailed flag
+        if template is not None:
+            use_template = template
+        elif detailed:
+            use_template = "detailed_state" if goal is None else "goal_oriented"
+        else:
+            use_template = self.caption_template
+        
+        caption_text = self.vlm.generate_caption(
+            image, 
+            template=use_template, 
+            goal=goal,
+            max_tokens=self.max_caption_tokens,
+        )
+        print(f"[VLMCaptioner] caption ({use_template}):\n{caption_text}")
         return caption_text
+
+    def caption_detailed(self, image: Any, goal_text: Optional[str] = None) -> str:
+        """Generate an extremely detailed caption for state representation."""
+        return self.caption(image, goal_text=goal_text, template="detailed_state", detailed=True)
+    
+    def caption_for_goal(self, image: Any, goal_text: str) -> str:
+        """Generate a goal-oriented caption focusing on progress toward the goal."""
+        return self.caption(image, goal_text=goal_text, template="goal_oriented", detailed=True)
 
     def caption_multi(self, image: Any, n: int = 1, goal_text: Optional[str] = None):
         return [self.caption(image, goal_text=goal_text) for _ in range(n)]
@@ -70,6 +113,22 @@ class VLMCaptioner:
         
         if not goal_text:
             return goal_text
+
+        # In-memory cache for expensive goal enrichment results
+        # Cache key: stable hash of goal text + (presence/absence) of goal image
+        # Note, avoid hashing goal_image contents here (could be large)
+        cache_key_obj = {
+            "goal_text": goal_text,
+            "has_goal_image": goal_image is not None,
+            "caption_template": self.caption_template,
+            "vlm_type": self.vlm_type,
+        }
+        cache_key = hashlib.sha256(json.dumps(cache_key_obj, sort_keys=True).encode("utf-8")).hexdigest()
+
+        cached = self._enrichment_cache.get(cache_key, None)
+        if cached is not None:
+            print(f"[VLMCaptioner] Using cached enriched goal for key={cache_key}")
+            return cached
             
         # Define questions to extract rich information about the goal
         # TODO: discuss these questions with team and refine
@@ -90,7 +149,7 @@ class VLMCaptioner:
             try:
                 # Use VLM to answer each question
                 # TODO: consider using a more advanced LLM for better enrichment
-                response = self.vlm.generate_caption(goal_image, template=question)
+                response = self.vlm.generate_caption(goal_image, template=question, goal=goal_text)
                 if response and response.strip():
                     enriched_parts.append(response.strip())
             except Exception as e:
@@ -98,9 +157,19 @@ class VLMCaptioner:
                 continue
         
         # Combine all information into enriched goal text
-        # TODO : using a better formatting strategy by LLM instead of simple joining.: NOTE: done in LLM_utils.py
-        enriched_goal = " | ".join(enriched_parts)
-        
+        # Now uses JSON formatting, better for LLM instead of | joining.
+        enriched_goal_obj = {
+            "original_goal": goal_text,
+            "enrichment": [
+                {"question": q, "answer": a}
+                for q, a in zip(enrichment_questions, enriched_parts[1:])
+            ],
+        }
+        enriched_goal = json.dumps(enriched_goal_obj, ensure_ascii=False, sort_keys=True)
+
+        # Update cache
+        self._enrichment_cache[cache_key] = enriched_goal
+
         print(f"[VLMCaptioner] Enriched goal from '{goal_text}' to: {enriched_goal}")
         
         return enriched_goal

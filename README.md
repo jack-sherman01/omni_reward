@@ -78,65 +78,145 @@ wrapped_env = OmniRewardWrapper(env, captioner, text_encoder, goal_text, use_sub
 then you should use the wrapped_env as normal gym env. The reward will be calculated based on subgoals: for example,
 
 ```python
-obs, reward, done, info = wrapped_env.step(action)
-```
-
-for your reference, here below is an example useage of the wrapped env:
-
-```python
+import os
 import gym
 
 from omni_reward.examples.env_wrapper import OmniRewardWrapper
 from omni_reward.vision.captioner import VLMCaptioner
-# NOTE: replace TextEncoderImpl with the actual encoder class in omni_reward/vision/text_encoder.py
-from omni_reward.vision.text_encoder import TextEncoderImpl  # TODO: check file for the right class
+from omni_reward.vision.text_encoder import TextEncoder
 
-ENV_ID = "CartPole-v1"  # or your own env id
+# Set API key
+os.environ["OPENAI_API_KEY"] = "your-api-key-here"
 
-def main():
-    # 1) original env
-    env = gym.make(ENV_ID)
+# Create base environment
+env = gym.make("YourEnv-v1", render_mode="rgb_array")
 
-    # 2) build captioner and text encoder (same config as you would use for omni_reward_interface)
-    captioner = VLMCaptioner(
-        vlm_type="openai",          # or your backend
-        caption_template="structured_v1",
-    )
-    text_encoder = TextEncoderImpl(
-        model_name="all-MiniLM-L6-v2",  # for example; check your implementation
-    )
+# Initialize captioner with detailed captions
+captioner = VLMCaptioner(
+    vlm_type="openai",
+    caption_template="detailed_state",  # Options: "simple", "structured_v1", "goal_oriented", "detailed_state"
+    max_caption_tokens=1024,  # Allow longer, more detailed captions
+)
+text_encoder = TextEncoder()
 
-    goal_text = "Move the red Cheez-Its box directly on top of the red mug."
+goal_text = "Push the puck to the red goal position."
 
-    # 3) wrap env with subgoals enabled
-    wrapped_env = OmniRewardWrapper(
-        env=env,
-        captioner=captioner,
-        text_encoder=text_encoder,
-        goal_text=goal_text,
-        use_subgoals=True,  # this flag turns on subgoal decomposition & subgoal-based reward
-    )
-
-    # 4) use wrapped_env as a normal Gym env in your rollout
-    obs = wrapped_env.reset()
-    done = False
-    while not done:
-        action = wrapped_env.action_space.sample()
-        obs, reward, done, info = wrapped_env.step(action)
-
-        # optional: inspect subgoal info
-        if "omni_reward_info" in info:
-            rinfo = info["omni_reward_info"]
-            print(
-                f"reward={reward:.3f}, "
-                f"subgoal={rinfo['current_subgoal']!r}, "
-                f"progress={rinfo['progress']:.2f}"
-            )
-
-if __name__ == "__main__":
-    main()
+# Wrap with OmniRewardWrapper
+wrapped_env = OmniRewardWrapper(
+    env=env,
+    captioner=captioner,
+    text_encoder=text_encoder,
+    goal_text=goal_text,
+    use_subgoals=True,  # Enable subgoal decomposition
+    openai_api_key=os.getenv("OPENAI_API_KEY"),  # Optional: pass API key directly
+    # Image saving options
+    save_images=True,
+    image_save_dir="./images/my_task",
+    task_name="my_task",
+    # Camera settings (for MuJoCo/MetaWorld environments)
+    camera_name="corner2",  # Options: "corner", "corner2", "corner3", "topview", "behindGripper", "frontview"
+    # VLM call frequency (to reduce API costs)
+    vlm_call_interval=10,  # Call VLM every 10 steps instead of every step
+    use_interpolated_reward=True,  # Use cached reward between VLM calls
+)
 ```
 
+### Using the Wrapped Environment
+
+```python
+obs, info = wrapped_env.reset()
+done = False
+
+while not done:
+    action = wrapped_env.action_space.sample()
+    obs, reward, terminated, truncated, info = wrapped_env.step(action)
+    
+    # Check if VLM was called this step
+    if info.get('vlm_called', False):
+        print("VLM was called this step")
+    
+    # Inspect subgoal info
+    if "omni_reward_info" in info:
+        rinfo = info["omni_reward_info"]
+        print(
+            f"reward={reward:.3f}, "
+            f"subgoal_idx={rinfo.get('current_subgoal_index', 'N/A')}, "
+            f"subgoal={rinfo.get('current_subgoal', 'N/A')!r}, "
+            f"completed={rinfo.get('subgoal_completed', False)}, "
+            f"all_done={rinfo.get('all_completed', False)}"
+        )
+    
+    done = terminated or truncated
+
+wrapped_env.close()
+```
+
+## OmniRewardWrapper Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `env` | gym.Env | required | Base environment to wrap |
+| `captioner` | VLMCaptioner | required | Captioner for generating image descriptions |
+| `text_encoder` | TextEncoder | required | Text encoder for semantic embeddings |
+| `goal_text` | str | required | High-level goal description |
+| `use_subgoals` | bool | `True` | Enable automatic subgoal decomposition |
+| `openai_api_key` | str | `None` | OpenAI API key (or set via environment variable) |
+| `save_images` | bool | `True` | Save rendered images to disk |
+| `image_save_dir` | str | `None` | Directory for saved images (default: `./images/{task_name}`) |
+| `task_name` | str | `"default_task"` | Task name for organizing saved images |
+| `camera_name` | str | `"corner2"` | Camera view for rendering (MuJoCo environments) |
+| `vlm_call_interval` | int | `10` | Call VLM every N steps (reduces API costs) |
+| `use_interpolated_reward` | bool | `True` | Use cached reward between VLM calls |
+
+## Caption Templates
+
+The captioner supports multiple templates for different levels of detail:
+
+| Template | Description | Use Case |
+|----------|-------------|----------|
+| `simple` | Brief one-line description | Fast, low-cost captioning |
+| `structured_v1` | Structured multi-section description | General purpose |
+| `goal_oriented` | Focuses on goal progress | Goal-conditioned tasks |
+| `detailed_state` | Maximum detail state description | High-fidelity reward computation |
+
+Example with detailed captions:
+
+```python
+captioner = VLMCaptioner(
+    caption_template="detailed_state",
+    max_caption_tokens=1024,
+)
+```
+
+## Camera Views (MuJoCo/MetaWorld)
+
+For MuJoCo-based environments like MetaWorld, you can specify different camera views:
+
+| Camera | Description |
+|--------|-------------|
+| `corner` | Default corner view (rear-right) |
+| `corner2` | Side view (left side) |
+| `corner3` | Side view (right side) |
+| `topview` | Top-down view |
+| `behindGripper` | Behind the gripper |
+| `frontview` | Custom front view (if configured) |
+
+## Reducing VLM API Costs
+
+Calling VLM at every step can be expensive. Use `vlm_call_interval` to reduce costs:
+
+```python
+wrapped_env = OmniRewardWrapper(
+    # ... other params ...
+    vlm_call_interval=10,  # Call VLM every 10 steps
+    use_interpolated_reward=True,  # Use last reward between calls
+)
+```
+
+Reward interpolation strategies (configurable in `env_wrapper.py`):
+- **Last reward**: Use the most recent VLM reward (default)
+- **Decay**: Reward decays over time between VLM calls
+- **Zero**: Return 0 between VLM calls (sparse reward)
 
 ## Implementing your own VLM provider
 
@@ -144,16 +224,18 @@ if __name__ == "__main__":
 - If your VLM provider is not available, register them through `omni_reward/VLM_utils/VLM_api.py`.
 - To change caption prompts, add/edit templates in `omni_reward/VLM_utils/templates.py` and reference them via the `caption_template` argument.
 
---
+---
 
 ## Repo file details
 
+- `examples/env_wrapper.py` provides the `OmniRewardWrapper` for easy environment integration.
 - `omni_reward/vision/captioner.py` wraps any configured VLM and produces captions.
 - `omni_reward/vision/text_encoder.py` wraps SentenceTransformers for embeddings.
 - `omni_reward/reward/multimodal.py` implements the potential function.
 - `omni_reward/reward/interface.py` exposes a small stateful class that returns shaped rewards.
 - `omni_reward/reward/use.py` provides the omni_reward_interface ready to import.
-- `omni_reward/VLM_utils/*` holds the VLM factory plus caption templates.
+- `omni_reward/VLM_utils/templates.py` contains caption prompt templates.
+- `omni_reward/VLM_utils/VLM_api.py` holds the VLM factory.
 
 ## Legacy code
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 
 import numpy as np
+import numpy.typing as npt
 
 from omni_reward.reward.multimodal import UnifiedMultimodalPotential
 from omni_reward.vision.captioner import VLMCaptioner
@@ -53,25 +54,43 @@ class OmniRewardInterface:
     Internally, the first generated caption becomes the baseline description and the reward is the difference between consecutive potentials.
     """
 
-    def __init__(
-        self,
-        captioner: Captioner,
-        text_encoder: TextEncoder,
-        *,
-        alpha: float = 0.6,
-        lambda_: float = 1.0,
-        store_history: bool = True,
-    ) -> None:
+    def __init__(self, captioner, text_encoder, allow_goal_change: bool = False):
+        """
+        Initialize the OmniReward interface.
+        
+        Args:
+            captioner: Vision-language model for generating captions
+            text_encoder: Model for encoding text to embeddings
+            allow_goal_change: If True, allows goal text to change during episode (for subgoals)
+        """
         self.captioner = captioner
         self.text_encoder = text_encoder
-        self.alpha = alpha
-        self.lambda_ = lambda_
-        self.store_history = store_history
+        self.allow_goal_change = allow_goal_change
         
-        # Add subgoal-related attributes
-        self.subgoals = []
-        self.current_subgoal_idx = 0
+        # Episode state
+        self._current_goal = None
+        self._initial_image = None
+        self._subgoals = None
+        self.current_subgoal_index = 0
         self.subgoal_completion_threshold = 0.8  # Configurable threshold for subgoal completion
+        
+        # Reward computation parameters
+        self.alpha = 0.5  # Weight for potential computation
+        self.lambda_ = 0.9  # Discount factor for potential computation
+        
+        # History tracking
+        self.store_history = True  # Whether to store history
+        self._history = []
+        
+        # Potential and baseline
+        self._potential = None
+        self.goal_text = None
+        self.baseline_caption = None
+        self.prev_potential = None
+        self.timestep = -1
+        
+        # Subgoals tracking
+        self.subgoals = None
         
         self.reset_episode()
 
@@ -135,33 +154,34 @@ class OmniRewardInterface:
     def start_episode_with_subgoals(
         self,
         goal_text: str,
-        initial_image: Optional[Any] = None,
-        baseline_caption: Optional[str] = None,
+        initial_image: Any = None,
         auto_decompose: bool = True,
     ) -> None:
-        """Start an episode with automatic goal decomposition.
+        """Start a new episode with subgoal decomposition."""
+        # Store the original goal
+        self._original_goal = goal_text
+        self.current_subgoal_index = 0
         
-        Parameters
-        ----------
-        goal_text:
-            The final goal to achieve.
-        initial_image:
-            Optional first observation.
-        baseline_caption:
-            Optional baseline caption.
-        auto_decompose:
-            Whether to automatically decompose the goal into subgoals.
-        """
         if auto_decompose:
-            self.subgoals = decompose_goal_to_subgoals(goal_text)
+            try:
+                # Decompose goal into subgoals using LLM
+                self.subgoals = decompose_goal_to_subgoals(goal_text)
+                if not self.subgoals or len(self.subgoals) == 0:
+                    print(f"[OmniRewardInterface] Warning: Failed to decompose goal, using original")
+                    self.subgoals = [goal_text]
+            except Exception as e:
+                print(f"[OmniRewardInterface] Warning: Error decomposing goal: {e}")
+                self.subgoals = [goal_text]
         else:
             self.subgoals = [goal_text]
-            
-        self.current_subgoal_idx = 0
         
-        # Start with the first subgoal
-        current_goal = self.subgoals[0] if self.subgoals else goal_text
-        self.start_episode(current_goal, initial_image, baseline_caption)
+        print(f"[OmniRewardInterface] Subgoals initialized: {len(self.subgoals)} subgoals")
+        for i, sg in enumerate(self.subgoals):
+            print(f"  {i+1}. {sg}")
+        
+        # Start with first subgoal - this sets self.goal_text
+        current_goal = self.subgoals[0]
+        self.start_episode(current_goal, initial_image)
 
     def check_subgoal_completion(self, current_potential: float) -> bool:
         """Check if current subgoal is completed based on potential.
@@ -184,11 +204,11 @@ class OmniRewardInterface:
         -------
         True if advanced to next subgoal, False if all subgoals completed.
         """
-        if self.current_subgoal_idx < len(self.subgoals) - 1:
-            self.current_subgoal_idx += 1
-            next_subgoal = self.subgoals[self.current_subgoal_idx]
+        if self.current_subgoal_index < len(self.subgoals) - 1: 
+            self.current_subgoal_index += 1  
+            next_subgoal = self.subgoals[self.current_subgoal_index]  
             
-            print(f"[OmniRewardInterface] Advancing to subgoal {self.current_subgoal_idx + 1}/{len(self.subgoals)}: {next_subgoal}")
+            print(f"[OmniRewardInterface] Advancing to subgoal {self.current_subgoal_index + 1}/{len(self.subgoals)}: {next_subgoal}")
             
             # Keep the baseline but update the goal
             prev_baseline = self.baseline_caption
@@ -201,57 +221,66 @@ class OmniRewardInterface:
     def compute_reward_with_subgoals(
         self,
         scene_image: Any,
-        timestep: Optional[int] = None,
         auto_advance: bool = True,
-        completion_bonus: float = 1.0,
-    ) -> Dict[str, Any]:
-        """Compute reward with subgoal progression.
-        
-        Parameters
-        ----------
-        scene_image:
-            Current observation.
-        timestep:
-            Optional timestep.
-        auto_advance:
-            Whether to automatically advance to next subgoal when current is completed.
-        completion_bonus:
-            Bonus reward for completing a subgoal.
-            
-        Returns
-        -------
-        Dictionary containing:
-            - reward: The computed reward
-            - subgoal_completed: Whether a subgoal was completed
-            - current_subgoal: Current subgoal text
-            - progress: Progress through subgoals (fraction)
+        completion_bonus: float = 10.0,
+    ) -> dict:
+        """Compute reward with subgoal tracking.
+    
+        Returns:
+            dict with keys:
+                - reward: float
+                - current_subgoal_index: int
+                - current_subgoal: str
+                - subgoal_completed: bool
+                - all_completed: bool
+                - all_subgoals: List[str]
         """
-        # Use current subgoal as the goal
-        current_goal = self.subgoals[self.current_subgoal_idx] if self.subgoals else self.goal_text
-        
-        # Compute regular reward
-        reward = self.compute_reward(scene_image, timestep, goal_text=current_goal)
-        
-        result = {
+        # Get current subgoal info with safe defaults
+        current_index = getattr(self, 'current_subgoal_index', 0)
+        subgoals = getattr(self, 'subgoals', None)
+    
+        # Handle case where subgoals is None or empty
+        if subgoals is None or len(subgoals) == 0:
+            # Fallback to using goal_text as the only subgoal
+            subgoals = [self.goal_text] if self.goal_text else ["Complete the task"]
+            self.subgoals = subgoals
+            self.current_subgoal_index = 0
+            current_index = 0
+    
+        if current_index >= len(subgoals):
+            # All subgoals completed
+            return {
+                'reward': completion_bonus,
+                'current_subgoal_index': current_index,
+                'current_subgoal': 'All completed',
+                'subgoal_completed': False,
+                'all_completed': True,
+                'all_subgoals': subgoals,
+            }
+    
+        current_subgoal = subgoals[current_index]
+    
+        # Compute reward for current subgoal
+        reward = self.compute_reward(scene_image)
+    
+        # Check if subgoal is completed based on threshold
+        threshold = getattr(self, 'subgoal_completion_threshold', 0.8)
+        subgoal_completed = reward > threshold
+    
+        if subgoal_completed and auto_advance:
+            self.current_subgoal_index = current_index + 1
+            reward += completion_bonus
+    
+        all_completed = (current_index + 1 >= len(subgoals)) and subgoal_completed
+    
+        return {
             'reward': reward,
-            'subgoal_completed': False,
-            'current_subgoal': current_goal,
-            'progress': (self.current_subgoal_idx + 1) / len(self.subgoals) if self.subgoals else 1.0,
-            'subgoal_index': self.current_subgoal_idx,
-            'total_subgoals': len(self.subgoals)
+            'current_subgoal_index': current_index,
+            'current_subgoal': current_subgoal,
+            'subgoal_completed': subgoal_completed,
+            'all_completed': all_completed,
+            'all_subgoals': subgoals,
         }
-        
-        # Check for subgoal completion
-        if self.prev_potential is not None and self.check_subgoal_completion(self.prev_potential):
-            result['subgoal_completed'] = True
-            result['reward'] += completion_bonus
-            
-            if auto_advance:
-                if not self.advance_to_next_subgoal():
-                    result['all_completed'] = True
-                    print("[OmniRewardInterface] All subgoals completed!")
-        
-        return result
 
     @property
     def history(self) -> List[RewardStep]:  # pragma: no cover - trivial accessor
@@ -260,55 +289,56 @@ class OmniRewardInterface:
         return list(self._history)
 
     def reset_episode(self, goal_text: Optional[str] = None) -> None:
-        """Clear cached state so a new episode can start."""
-
+        """Clear cached state so a new episode can start.
+        
+        Note: This does NOT reset goal_text or subgoals - those are set by
+        start_episode() or start_episode_with_subgoals().
+        """
         self._potential = None
-        self.goal_text = enrich_goal_description(goal_text, domain="robotics") # using LLM
-        # self.goal_text = VLMCaptioner.enrich_goal(goal_text, image) # using VLM
         self.baseline_caption = None
         self.prev_potential = None
         self.timestep = -1
         self._history = []
+        self.current_subgoal_index = 0
+        # Note: goal_text is not reset here
 
     def start_episode(
         self,
         goal_text: str,
-        initial_image: Optional[Any] = None,
-        baseline_caption: Optional[str] = None,
+        initial_image: Any = None,
     ) -> None:
-        """Reset the interface and optionally prime the baseline.
-
+        """Start a new episode with the given goal.
+        
         Parameters
         ----------
         goal_text:
-            Text goal that will remain fixed for the episode.
+            The goal description for this episode.
         initial_image:
-            Optional first observation used to bootstrap the baseline potential.
-        baseline_caption:
-            Skip re-captioning when the baseline caption is already known.
+            Optional initial image to establish baseline.
         """
-
-        self.reset_episode(goal_text=goal_text)
-
-        caption = baseline_caption
-        # NOTE: where is the initial_image from?? Usually the first observation of the episode.
-        if caption is None and initial_image is not None:
-            caption = self.captioner.caption(initial_image, goal_text=goal_text)
-            rich_caption = enrich_state_description(caption, domain="robotics") # using LLM
-            # rich_caption = VLMCaptioner.enrich_state(caption, initial_image) # using VLM
-        if caption is None:
-            return
-
-        self.baseline_caption = rich_caption
-        if initial_image is None:
-            return
-        # TODO: should be one arg for _compute_potential?
-        potential = self._compute_potential(rich_caption)
-        self.prev_potential = potential
-        self.timestep = 0
-        # TODO: record initial step with zero reward is right? reward at initial step could be negtive.
-        # TODO: I think here we can just record the caption insteasd of rich_caption
-        self._record_step(timestep=0, caption=caption, potential=potential, reward=0.0)
+        # Enrich the goal text
+        try:
+            self.goal_text = enrich_goal_description(goal_text, domain="robotics")
+        except Exception as e:
+            print(f"[OmniRewardInterface] Warning: Failed to enrich goal: {e}")
+            self.goal_text = goal_text  # Use original if enrichment fails
+    
+        # Reset state but keep goal_text
+        self.baseline_caption = None
+        self.prev_potential = None
+        self.timestep = -1
+        self._history = []
+    
+        print(f"[OmniRewardInterface] Episode started with goal: {self.goal_text[:100]}...")
+    
+        # If initial image provided, generate baseline caption
+        if initial_image is not None:
+            try:
+                caption = self.captioner.caption(initial_image, goal_text=self.goal_text)
+                self.baseline_caption = caption
+                print(f"[OmniRewardInterface] Baseline caption: {caption[:100]}...")
+            except Exception as e:
+                print(f"[OmniRewardInterface] Warning: Failed to generate baseline caption: {e}")
 
     def _record_step(self, *, timestep: int, image_caption: str, potential: float, reward: float) -> None:
         """ Save to history for logging purposes """ 
@@ -318,16 +348,35 @@ class OmniRewardInterface:
             RewardStep(timestep=timestep, image_caption=image_caption, potential=potential, reward=reward)
         )
 
-    def _resolve_goal(self, goal_text: Optional[str]) -> str:
+    def _resolve_goal(self, goal_text: Optional[str] = None) -> str:
+        """Resolve the goal text to use.
+    
+        Parameters
+        ----------
+        goal_text:
+            Optional override goal text.
+        
+        Returns
+        -------
+        The goal text to use.
+        """
         if goal_text is not None:
-            if self.goal_text is not None and goal_text != self.goal_text:
-                raise ValueError("Goal text changed during an episode. Call reset_episode() before switching goals.")
-            self.goal_text = goal_text
-
-        if self.goal_text is None:
-            raise ValueError("Goal text must be provided before computing rewards.")
-
-        return self.goal_text
+            return goal_text
+    
+        if self.goal_text is not None and self.goal_text != "":
+            return self.goal_text
+    
+        # Try to get from subgoals
+        if hasattr(self, 'subgoals') and self.subgoals and len(self.subgoals) > 0:
+            idx = getattr(self, 'current_subgoal_index', 0)
+            if idx < len(self.subgoals):
+                return self.subgoals[idx]
+    
+        # Try original goal
+        if hasattr(self, '_original_goal') and self._original_goal:
+            return self._original_goal
+    
+        raise ValueError("No goal text available. Call start_episode() first.")
 
     def _resolve_timestep(self, supplied_timestep: Optional[int], incoming_goal: Optional[str]) -> int:
         if supplied_timestep is None:
@@ -374,7 +423,7 @@ class OmniRewardInterface:
 
         timestep = self._resolve_timestep(timestep, goal_text)
         resolved_goal = self._resolve_goal(goal_text)
-
+        # TODO: can be optimized to avoid double captioning when priming baseline
         image_caption = self.captioner.caption(scene_image, goal_text=resolved_goal)
         self._prime_baseline(image_caption)
 
@@ -396,7 +445,83 @@ class OmniRewardInterface:
         self.prev_potential = potential
         self.timestep = timestep
         self._record_step(timestep=timestep, image_caption=image_caption, potential=potential, reward=reward)
-        return reward
+        
+        # Compute completion sense reward
+        # R_completion = r_base + β · sigmoid(k · (Φ - τ)) · (1 + Δ_progress)
+        # where:
+        #   - r_base: base potential reward
+        #   - Φ: current potential (similarity to goal)
+        #   - τ: completion threshold
+        #   - k: sigmoid steepness factor
+        #   - Δ_progress: improvement from previous step
+        #   - β: completion bonus weight
+        completion_sense_reward = self._compute_completion_sense_reward(
+            base_reward=reward,
+            current_potential=potential,
+            prev_potential=prev_potential,
+        )
+        
+        return completion_sense_reward
+
+    def _compute_completion_sense_reward(
+        self,
+        base_reward: float,
+        current_potential: float,
+        prev_potential: Optional[float],
+        completion_threshold: float = 0.7,
+        sigmoid_steepness: float = 10.0,
+        completion_bonus_weight: float = 0.5,
+    ) -> float:
+        """Compute completion-aware reward with smooth transition near goal.
+
+        The completion sense reward combines base reward with a sigmoid-based
+        completion bonus that activates as the agent approaches the goal:
+
+            R_completion = r_base + β · σ(k · (Φ - τ)) · (1 + max(0, ΔΦ))
+
+        where:
+            - r_base: base potential reward from current state
+            - Φ: current potential (normalized similarity to goal, in [-1, 1])
+            - τ: completion threshold (typically 0.7-0.9)
+            - k: sigmoid steepness factor (controls sharpness of transition)
+            - σ(x) = 1 / (1 + exp(-x)): sigmoid function for smooth activation
+            - ΔΦ = Φ_t - Φ_{t-1}: progress from previous step
+            - β: completion bonus weight
+
+        This formulation provides: 
+            1. Smooth reward increase as agent approaches completion
+            2. Extra bonus for continued progress near the goal
+            3. No discontinuous jumps at threshold boundaries
+
+        Args:
+            base_reward: The base potential reward.
+            current_potential: Current state's potential value Φ(s).
+            prev_potential: Previous state's potential value Φ(s').
+            completion_threshold: Threshold τ where completion bonus activates.
+            sigmoid_steepness: Steepness k of sigmoid transition.
+            completion_bonus_weight: Weight β for completion bonus.
+
+        Returns:
+            The completion-aware shaped reward.
+        """
+        # Sigmoid activation: σ(k · (Φ - τ))
+        # Maps potential to [0, 1] with smooth transition around threshold
+        sigmoid_input = sigmoid_steepness * (current_potential - completion_threshold)
+        completion_activation = 1.0 / (1.0 + np.exp(-sigmoid_input))
+        
+        # Progress term: ΔΦ = Φ_t - Φ_{t-1}
+        # Rewards continued improvement, especially near goal
+        progress = 0.0
+        if prev_potential is not None:
+            progress = max(0.0, current_potential - prev_potential)
+        
+        # Completion bonus: β · σ(k · (Φ - τ)) · (1 + ΔΦ)
+        completion_bonus = completion_bonus_weight * completion_activation * (1.0 + progress)
+        
+        # Final reward: r_base + completion_bonus
+        completion_sense_reward = base_reward + completion_bonus
+        
+        return completion_sense_reward
 
     def get_current_reward(self, scene_image: Any, goal_text: Optional[str] = None) -> float:
         """Streaming-friendly alias that only requires the latest image.
