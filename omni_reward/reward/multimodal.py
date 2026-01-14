@@ -63,6 +63,7 @@ class UnifiedMultimodalPotential:
         return cosine_sim(emb, self.tactile_goal_emb)
 
     def compute(self, image_caption: str, alpha: float, lambda_: float) -> float:
+        # TODO: should we do normalization here for the potentials?
         phi_v = self._vision_potential(image_caption, alpha)
         #TODO: enable tactile potential when available and add force potential as well
         # phi_t = self._tactile_potential(None)

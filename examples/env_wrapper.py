@@ -327,67 +327,26 @@ class OmniRewardWrapper:
         return obs, info
     
     def step(self, action):
-        obs, _, terminated, truncated, info = self.env.step(action)
-        self._timestep += 1
-        self._steps_since_vlm_call += 1
-        
-        # Get the current image (using the specified camera)
-        current_image = self._get_image(camera_name=self.camera_name)
-        
-        # Save the image
-        if self.save_images and current_image is not None:
-            self._save_image(current_image, step=self._timestep)
-        
-        # Determine if we should call VLM this step
-        vlm_called = False
-        if self._should_call_vlm():
-            vlm_called = True
-            # Call VLM to compute reward
-            if self.use_subgoals:
-                result = self.reward_interface.compute_reward_with_subgoals(
-                    scene_image=current_image,
-                    auto_advance=True,
-                    completion_bonus=10.0
-                )
-                reward = result['reward']
-                info['omni_reward_info'] = result
-                
-                # Cache the result
-                self._last_vlm_reward = reward
-                self._last_vlm_result = result
-                self._steps_since_vlm_call = 0
-                
-                # Log VLM call result
-                self._log(f"\n--- Step {self._timestep} (VLM Called) ---")
-                self._log(f"Reward: {reward:.4f}")
-                self._log(f"Current Subgoal Index: {result.get('current_subgoal_index', 'N/A')}")
-                self._log(f"Current Subgoal: {result.get('current_subgoal', 'N/A')}")
-                self._log(f"Subgoal Completed: {result.get('subgoal_completed', False)}")
-                self._log(f"All Completed: {result.get('all_completed', False)}")
-                
-                if result.get('all_completed', False):
-                    self._log("🎉 All subgoals completed!")
-                    terminated = True
-            else:
-                reward = self.reward_interface.compute_reward(current_image)
-                self._last_vlm_reward = reward
-                self._steps_since_vlm_call = 0
-                
-                self._log(f"\n--- Step {self._timestep} (VLM Called) ---")
-                self._log(f"Reward: {reward:.4f}")
+        # obs, _, done, info = self.env.step(action) # NOTE:old version < gym 0.26 does not return info
+        obs, _, terminated, truncated, info = self.env.step(action) # gym 0.26+
+        done = terminated or truncated
+        if self.use_subgoals:
+            # Compute reward using subgoal-based progression
+            result = self.reward_interface.compute_reward_with_subgoals(
+                scene_image=obs, #TODO: check if obs contains image or need to extract
+                timestep=self.reward_interface.timestep,
+                auto_advance=True,
+                completion_bonus=10.0  # Extra reward for completing a subgoal
+            )
+            
+            reward = result['reward']
+            info['omni_reward_info'] = result
             
             info['vlm_called'] = True
         else:
-            # Use interpolated/cached reward
-            reward = self._compute_interpolated_reward()
-            info['vlm_called'] = False
-            
-            # Still include last VLM result info if available
-            if self._last_vlm_result is not None:
-                info['omni_reward_info'] = self._last_vlm_result
-            
-            # Log interpolated step (debug level, only to file)
-            self.logger.debug(f"Step {self._timestep}: Interpolated reward = {reward:.4f}")
+            # Compute reward directly from the final goal
+            reward = self.reward_interface.compute_reward(obs, timestep=self.reward_interface.timestep, goal_text=self.goal_text
+                                                          )
             
         return obs, reward, terminated, truncated, info
     

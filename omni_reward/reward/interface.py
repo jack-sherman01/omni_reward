@@ -429,9 +429,18 @@ class OmniRewardInterface:
 
         potential = self._compute_potential(image_caption)
         prev_potential = self.prev_potential
-        # NOTE: only use potential as reward for test now, need to add difference as a reward term later.
+        # TODO: CHECK IF THIS IS CORRECT LOGIC FOR REWARD
+        # reward = 0.0 if prev_potential is None was original, but should be a problem for RL training if negtive reward at initial step.
         # reward = 0.0 if prev_potential is None else potential - prev_potential
-        reward = potential # use potential as reward for test
+        # solution 1: assume baseline potential is 0 at the begining
+        if prev_potential is None:
+            # assume baseline potential is 0
+            reward = potential - 0.0  # or self.baseline_potential
+        else:
+            reward = potential - prev_potential
+        
+        # solution 2: return the potential itself at the first step (if the potential is already normalized to a reasonable range)
+        # reward = potential if prev_potential is None else potential - prev_potential
 
         self.prev_potential = potential
         self.timestep = timestep
