@@ -42,3 +42,4 @@ transformers==4.57.3
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 urllib3==2.6.2
+google-generativeai
