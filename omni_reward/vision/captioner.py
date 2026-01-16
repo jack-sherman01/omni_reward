@@ -18,22 +18,33 @@ class VLMCaptioner:
         max_tokens: int = 1024,
         api_key: Optional[str] = None,
         vlm: Optional[Any] = None,
+        # Local model parameters
+        model_path: Optional[str] = None,
+        device: str = "cuda",
         **vlm_kwargs,
     ):
         """
         Args:
-            provider: VLM provider ("openai", "gemini", "qwen", "claude")
+            provider: VLM provider ("openai", "gemini", "qwen", "claude", "llava", "qwen2vl", "local")
             template: Caption template name
             max_tokens: Max tokens for response
             api_key: API key (optional, uses env var if not provided)
             vlm: Optional pre-initialized VLM instance
+            model_path: Path to local model (for local providers)
+            device: Device for local models ("cuda" or "cpu")
             **vlm_kwargs: Additional args passed to VLM constructor
         """
         if vlm is not None:
             self.vlm = vlm
         else:
+            # Build kwargs for VLM
             if api_key:
                 vlm_kwargs["api_key"] = api_key
+            if model_path:
+                vlm_kwargs["model_path"] = model_path
+            if provider in ("llava", "qwen2vl", "local"):
+                vlm_kwargs["device"] = device
+            
             self.vlm = get_vlm(provider, **vlm_kwargs)
         
         self.template = template
