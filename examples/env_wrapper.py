@@ -113,7 +113,8 @@ class OmniRewardWrapper:
         
         # Image saving settings - automatically include task name
         self.save_images = save_images
-        self.image_save_dir = image_save_dir if image_save_dir else f"./images/{task_name}"
+        date_str = datetime.now().strftime("%Y%m%d")
+        self.image_save_dir = image_save_dir if image_save_dir else f"./images/{task_name}/{date_str}"
         if self.save_images:
             os.makedirs(self.image_save_dir, exist_ok=True)
         
