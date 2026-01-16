@@ -227,6 +227,49 @@ Please provide:
 Respond ONLY in JSON format:
 {{"progress": 0.5, "explanation": "...", "completed": false}}"""
 
+    def _call_vlm_with_image(
+        self,
+        prompt: str,
+        image: Union[np.ndarray, "Image.Image"],
+        max_tokens: int = 1024,
+    ) -> str:
+        """Call the VLM API with an image. Must be implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement _call_vlm_with_image")
+
+    def generate_caption(
+        self,
+        image: Union[np.ndarray, "Image.Image"],
+        template: str = "detailed_state",
+        goal: Optional[str] = None,
+        max_tokens: int = 1024,
+    ) -> str:
+        """Generate a detailed caption for an image.
+        
+        Args:
+            image: Image to caption (numpy array or PIL Image)
+            template: Template name from CAPTION_TEMPLATES or custom prompt string
+            goal: Optional goal context to include
+            max_tokens: Maximum tokens in response
+            
+        Returns:
+            Caption text
+        """
+        # Get template from predefined templates or use as custom prompt
+        if template in CAPTION_TEMPLATES:
+            prompt = get_template(template, goal=goal)
+        else:
+            prompt = template
+            if goal:
+                prompt = f"{prompt}\n\nGoal context: {goal}"
+        
+        response_text = self._call_vlm_with_image(prompt, image, max_tokens)
+        
+        # Try to parse JSON response, otherwise return raw text
+        parsed = self._parse_json_response(response_text)
+        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
+        
+        return str(caption).strip() if caption else response_text.strip()
+
 
 class OpenAIVLM(APIVLMBase):
     """VLM implementation using OpenAI API (GPT-4o, GPT-4V)"""
@@ -309,34 +352,13 @@ class OpenAIVLM(APIVLMBase):
             "raw_response": response.choices[0].message.content,
         }
 
-    def generate_caption(
-        self, 
-        image: Any, 
-        template: str = "detailed_state",  # Changed default to detailed_state
-        goal: Optional[str] = None,
-        max_tokens: int = 1024,  # Increased for longer responses
+    def _call_vlm_with_image(
+        self,
+        prompt: str,
+        image: Union[np.ndarray, "Image.Image"],
+        max_tokens: int = 1024,
     ) -> str:
-        """Generate a detailed caption for an image.
-        
-        Args:
-            image: Image to caption (numpy array, PIL Image, or path)
-            template: Template name or custom prompt string
-            goal: Optional goal context to include
-            max_tokens: Maximum tokens in response (default 1024 for detailed output)
-        """
-        # Get template from predefined templates or use as custom prompt
-        if template in CAPTION_TEMPLATES:
-            prompt = get_template(template, goal=goal)
-        else:
-            # Use template as custom prompt directly
-            prompt = template
-            if goal:
-                prompt = f"{prompt}\n\nGoal context: {goal}"
-        
-        # Convert image to base64
         base64_image = self._image_to_base64(image)
-        
-        # Call OpenAI API
         response = self.client.chat.completions.create(
             model=self.vision_model,
             messages=[
@@ -350,8 +372,7 @@ class OpenAIVLM(APIVLMBase):
             ],
             max_tokens=max_tokens,
         )
-        
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content
 
 
 class GeminiVLM(APIVLMBase):
@@ -360,13 +381,13 @@ class GeminiVLM(APIVLMBase):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gemini-1.5-flash",
+        model: str = "gemini-2.0-flash",  # Updated model name
         embedding_model: str = "models/text-embedding-004",
     ):
         if genai is None:
             raise ImportError("Please install google-generativeai: pip install google-generativeai")
 
-        genai.configure(api_key=api_key or os.getenv("GOOGLE_API_KEY"))
+        genai.configure(api_key=api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
         self.model = genai.GenerativeModel(model)
         self.embedding_model = embedding_model
 
@@ -407,21 +428,20 @@ class GeminiVLM(APIVLMBase):
             "raw_response": response.text,
         }
 
-    def generate_caption(
+    def _call_vlm_with_image(
         self,
+        prompt: str,
         image: Union[np.ndarray, "Image.Image"],
-        template: str = "structured_v1",
-        goal: Optional[str] = None,
+        max_tokens: int = 1024,
     ) -> str:
         pil_image = self._to_pil_image(image)
-        prompt = self._get_caption_prompt(template, goal)
-
-        response = self.model.generate_content([prompt, pil_image])
-        parsed = self._parse_json_response(response.text)
-        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
-        if not caption:
-            raise RuntimeError("Gemini caption produced no text")
-        return str(caption).strip()
+        response = self.model.generate_content(
+            [prompt, pil_image],
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=max_tokens,
+            ),
+        )
+        return response.text
 
 
 class QwenVLM(APIVLMBase):
@@ -522,15 +542,13 @@ class QwenVLM(APIVLMBase):
         else:
             raise RuntimeError(f"Qwen vision call failed: {response.message}")
 
-    def generate_caption(
+    def _call_vlm_with_image(
         self,
+        prompt: str,
         image: Union[np.ndarray, "Image.Image"],
-        template: str = "structured_v1",
-        goal: Optional[str] = None,
+        max_tokens: int = 1024,
     ) -> str:
         pil_image = self._to_pil_image(image)
-        prompt = self._get_caption_prompt(template, goal)
-
         buffer = io.BytesIO()
         pil_image.save(buffer, format="PNG")
         image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
@@ -553,12 +571,7 @@ class QwenVLM(APIVLMBase):
         if response.status_code != 200:
             raise RuntimeError(f"Qwen vision call failed: {response.message}")
 
-        response_text = response.output.choices[0].message.content[0]["text"]
-        parsed = self._parse_json_response(response_text)
-        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
-        if not caption:
-            raise RuntimeError("Qwen caption produced no text")
-        return str(caption).strip()
+        return response.output.choices[0].message.content[0]["text"]
 
 
 class ClaudeVLM(APIVLMBase):
@@ -680,18 +693,16 @@ class ClaudeVLM(APIVLMBase):
             "raw_response": response_text,
         }
 
-    def generate_caption(
+    def _call_vlm_with_image(
         self,
+        prompt: str,
         image: Union[np.ndarray, "Image.Image"],
-        template: str = "structured_v1",
-        goal: Optional[str] = None,
+        max_tokens: int = 1024,
     ) -> str:
         base64_image = self._image_to_base64(image)
-        prompt = self._get_caption_prompt(template, goal)
-
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=400,
+            max_tokens=max_tokens,
             messages=[
                 {
                     "role": "user",
@@ -704,21 +715,12 @@ class ClaudeVLM(APIVLMBase):
                                 "data": base64_image,
                             },
                         },
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        },
+                        {"type": "text", "text": prompt},
                     ],
                 }
             ],
         )
-
-        response_text = response.content[0].text
-        parsed = self._parse_json_response(response_text)
-        caption = parsed.get("caption") or parsed.get("explanation") or parsed.get("raw_text")
-        if not caption:
-            raise RuntimeError("Claude caption produced no text")
-        return str(caption).strip()
+        return response.content[0].text
 
 
 class VLMFactory:
