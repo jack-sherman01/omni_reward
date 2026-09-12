@@ -22,6 +22,13 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
+# Try to import Google Generative AI client
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
 
 class LLMClient:
     """Unified client for interacting with various LLM providers."""
@@ -39,7 +46,7 @@ class LLMClient:
         Parameters
         ----------
         provider:
-            LLM provider to use. Options: "openai", "anthropic".
+            LLM provider to use. Options: "openai", "anthropic", "gemini".
         model:
             Model name to use. If None, uses default for provider.
         api_key:
@@ -66,6 +73,16 @@ class LLMClient:
             self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
             self.model = model or "claude-3-sonnet-20240229"
             self.client = anthropic.Anthropic(api_key=self.api_key)
+            
+        elif self.provider == "gemini":
+            if not GEMINI_AVAILABLE:
+                raise ImportError("Google Generative AI package not installed. Run: pip install google-generativeai")
+            self.api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if not self.api_key:
+                raise ValueError("Gemini API key not found. Set GOOGLE_API_KEY or GEMINI_API_KEY environment variable.")
+            genai.configure(api_key=self.api_key)
+            self.model = model or "gemini-1.5-flash"  # Free tier model
+            self.client = genai.GenerativeModel(self.model)
             
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -120,6 +137,23 @@ class LLMClient:
             )
             return response.content[0].text.strip()
         
+        elif self.provider == "gemini":
+            # Combine system prompt and user prompt for Gemini
+            full_prompt = prompt
+            if system_prompt:
+                full_prompt = f"{system_prompt}\n\n{prompt}"
+            
+            generation_config = genai.types.GenerationConfig(
+                temperature=temp,
+                max_output_tokens=tokens,
+            )
+            
+            response = self.client.generate_content(
+                full_prompt,
+                generation_config=generation_config,
+            )
+            return response.text.strip()
+        
         return ""
 
 
@@ -129,7 +163,7 @@ _default_client: Optional[LLMClient] = None
 # Default model configuration (can be overridden via environment variables)
 DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 DEFAULT_ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
-
+DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 def get_llm_client(
     provider: str = "openai",
@@ -141,7 +175,7 @@ def get_llm_client(
     Parameters
     ----------
     provider:
-        LLM provider to use.
+        LLM provider to use. Options: "openai", "anthropic", "gemini".
     model:
         Model name to use. If None, uses default from environment or fallback.
     **kwargs:
@@ -159,6 +193,8 @@ def get_llm_client(
             model = DEFAULT_OPENAI_MODEL
         elif provider.lower() == "anthropic":
             model = DEFAULT_ANTHROPIC_MODEL
+        elif provider.lower() == "gemini":
+            model = DEFAULT_GEMINI_MODEL
     
     if _default_client is None or _default_client.provider != provider:
         _default_client = LLMClient(provider=provider, model=model, **kwargs)

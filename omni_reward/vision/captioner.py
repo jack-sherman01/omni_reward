@@ -9,22 +9,50 @@ from omni_reward.VLM_utils.VLM_api import get_vlm
 from omni_reward.VLM_utils.VLM_local import VLMBase
 
 class VLMCaptioner:
-    """Captioner that delegates to any configured VLM from VLM_utils."""
-
+    """Generate captions using VLM"""
+    
     def __init__(
         self,
-        vlm_type: str = "openai",
-        caption_template: str = "detailed_state",  # Changed default to detailed_state
-        goal_context: Optional[str] = None,
-        vlm: Optional[VLMBase] = None,
-        max_caption_tokens: int = 1024,  # New parameter for longer captions
+        provider: str = "openai",
+        template: str = "detailed_state",
+        max_tokens: int = 1024,
+        api_key: Optional[str] = None,
+        vlm: Optional[Any] = None,
+        # Local model parameters
+        model_path: Optional[str] = None,
+        device: str = "cuda",
         **vlm_kwargs,
     ):
-        self.vlm_type = vlm_type
-        self.caption_template = caption_template
-        self.goal_context = goal_context
-        self.vlm = vlm or get_vlm(vlm_type, **vlm_kwargs)
-        self.max_caption_tokens = max_caption_tokens
+        """
+        Args:
+            provider: VLM provider ("openai", "gemini", "qwen", "claude", "llava", "qwen2vl", "local")
+            template: Caption template name
+            max_tokens: Max tokens for response
+            api_key: API key (optional, uses env var if not provided)
+            vlm: Optional pre-initialized VLM instance
+            model_path: Path to local model (for local providers)
+            device: Device for local models ("cuda" or "cpu")
+            **vlm_kwargs: Additional args passed to VLM constructor
+        """
+        if vlm is not None:
+            self.vlm = vlm
+        else:
+            # Build kwargs for VLM
+            if api_key:
+                vlm_kwargs["api_key"] = api_key
+            if model_path:
+                vlm_kwargs["model_path"] = model_path
+            if provider in ("llava", "qwen2vl", "local"):
+                vlm_kwargs["device"] = device
+            
+            self.vlm = get_vlm(provider, **vlm_kwargs)
+        
+        self.template = template
+        self.caption_template = template  # Alias for compatibility
+        self.max_tokens = max_tokens
+        self.max_caption_tokens = max_tokens  # Alias for compatibility
+        self.vlm_type = provider  # For cache key
+        self.goal_context = None  # Initialize goal context
 
         # In-memory cache for expensive goal enrichment results
         self._enrichment_cache = {}
